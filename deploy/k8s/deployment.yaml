@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: social-agent
+  namespace: social-agent
+  labels:
+    app: social-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: social-agent
+  template:
+    metadata:
+      labels:
+        app: social-agent
+    spec:
+      containers:
+        - name: social-agent
+          image: socialagent:latest
+          ports:
+            - containerPort: 8080
+          env:
+            - name: ASPNETCORE_ENVIRONMENT
+              value: "Production"
+            - name: ASPNETCORE_URLS
+              value: "http://+:8080"
+            - name: SocialAgent__DatabaseProvider
+              value: "PostgreSQL"
+            - name: ConnectionStrings__SocialAgent
+              valueFrom:
+                secretKeyRef:
+                  name: social-agent-secrets
+                  key: connection-string
+            - name: SocialAgent__Providers__Mastodon__Enabled
+              valueFrom:
+                configMapKeyRef:
+                  name: social-agent-config
+                  key: mastodon-enabled
+            - name: SocialAgent__Providers__Mastodon__InstanceUrl
+              valueFrom:
+                configMapKeyRef:
+                  name: social-agent-config
+                  key: mastodon-instance-url
+            - name: SocialAgent__Providers__Mastodon__AccessToken
+              valueFrom:
+                secretKeyRef:
+                  name: social-agent-secrets
+                  key: mastodon-access-token
+            - name: SocialAgent__Providers__Bluesky__Enabled
+              valueFrom:
+                configMapKeyRef:
+                  name: social-agent-config
+                  key: bluesky-enabled
+            - name: SocialAgent__Providers__Bluesky__Handle
+              valueFrom:
+                configMapKeyRef:
+                  name: social-agent-config
+                  key: bluesky-handle
+            - name: SocialAgent__Providers__Bluesky__AppPassword
+              valueFrom:
+                secretKeyRef:
+                  name: social-agent-secrets
+                  key: bluesky-app-password
+          livenessProbe:
+            httpGet:
+              path: /health/live
+              port: 8080
+            initialDelaySeconds: 15
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"

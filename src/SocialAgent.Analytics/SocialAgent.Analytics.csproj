@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <RootNamespace>SocialAgent.Analytics</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SocialAgent.Core\SocialAgent.Core.csproj" />
+    <ProjectReference Include="..\SocialAgent.Data\SocialAgent.Data.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <RootNamespace>SocialAgent.Host</RootNamespace>
+    <UserSecretsId>socialagent-host-001</UserSecretsId>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Agents.Hosting.AspNetCore.A2A.Preview" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\SocialAgent.Core\SocialAgent.Core.csproj" />
+    <ProjectReference Include="..\SocialAgent.Data\SocialAgent.Data.csproj" />
+    <ProjectReference Include="..\SocialAgent.Analytics\SocialAgent.Analytics.csproj" />
+    <ProjectReference Include="..\SocialAgent.Providers.Mastodon\SocialAgent.Providers.Mastodon.csproj" />
+    <ProjectReference Include="..\SocialAgent.Providers.Bluesky\SocialAgent.Providers.Bluesky.csproj" />
+  </ItemGroup>
+</Project>
