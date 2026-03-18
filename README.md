@@ -50,7 +50,8 @@ The agent starts on `http://localhost:5000` by default (or as configured by `ASP
 
 ### A2A Endpoints
 
-- `GET /.well-known/agent-card.json` — Agent capabilities
+- `GET /.well-known/agent.json` — Agent card (A2A spec)
+- `GET /a2a/.well-known/agent-card.json` — Agent card (alternate)
 - `POST /a2a` — JSON-RPC task interface
 - `GET /health/ready` — Readiness probe
 - `GET /health/live` — Liveness probe

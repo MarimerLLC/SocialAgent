@@ -41,7 +41,8 @@ SocialAgent is an **A2A-enabled social media monitoring agent** built on .NET 10
 ### A2A Protocol
 
 The agent exposes the Google A2A protocol via the Microsoft Agents SDK:
-- **`GET /.well-known/agent-card.json`** — Agent card with skills
+- **`GET /.well-known/agent.json`** — Agent card with skills (A2A spec)
+- **`GET /a2a/.well-known/agent-card.json`** — Agent card (alternate)
 - **`POST /a2a`** — JSON-RPC message handling
 
 Seven skills are exposed: `engagement-summary`, `top-posts`, `recent-mentions`, `follower-insights`, `platform-comparison`, `check-notifications`, `provider-status`.
