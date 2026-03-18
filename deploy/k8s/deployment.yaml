@@ -62,6 +62,11 @@ spec:
                 secretKeyRef:
                   name: social-agent-secrets
                   key: bluesky-app-password
+            - name: Authentication__ApiKey
+              valueFrom:
+                secretKeyRef:
+                  name: social-agent-secrets
+                  key: api-key
           livenessProbe:
             httpGet:
               path: /health/live

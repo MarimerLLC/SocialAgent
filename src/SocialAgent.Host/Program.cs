@@ -7,6 +7,7 @@ using SocialAgent.Analytics;
 using SocialAgent.Data;
 using SocialAgent.Host;
 using SocialAgent.Host.Services;
+using SocialAgent.Host.Auth;
 using SocialAgent.Providers.Bluesky;
 using SocialAgent.Providers.Mastodon;
 
@@ -38,10 +39,16 @@ builder.Services.AddBlueskyProvider(builder.Configuration);
 builder.Services.AddHostedService<DatabaseMigrationService>();
 builder.Services.AddHostedService<SocialMediaPollingService>();
 
+// Authentication (API key required in non-Development environments)
+builder.Services.AddApiKeyAuthentication(builder.Configuration);
+
 // Health checks
 builder.Services.AddHealthChecks();
 
 var app = builder.Build();
+
+app.UseAuthentication();
+app.UseAuthorization();
 
 // Map A2A endpoints (no auth required for development)
 app.MapA2AEndpoints(requireAuth: !app.Environment.IsDevelopment());
