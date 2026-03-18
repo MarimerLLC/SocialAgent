@@ -1,6 +1,8 @@
 using Microsoft.Agents.Builder;
+using Microsoft.Agents.Builder.State;
 using Microsoft.Agents.Hosting.A2A;
 using Microsoft.Agents.Hosting.AspNetCore;
+using Microsoft.Agents.Storage;
 using SocialAgent.Analytics;
 using SocialAgent.Data;
 using SocialAgent.Host;
@@ -11,6 +13,10 @@ using SocialAgent.Providers.Mastodon;
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration.AddUserSecrets<Program>(optional: true);
+
+// Agent infrastructure
+builder.Services.AddSingleton<IStorage, MemoryStorage>();
+builder.AddAgentApplicationOptions();
 
 // Register the agent
 builder.AddAgent<SocialAgentHandler>();
