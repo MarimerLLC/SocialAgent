@@ -5,6 +5,6 @@ metadata:
   namespace: social-agent
 data:
   mastodon-enabled: "true"
-  mastodon-instance-url: "https://mastodon.social"
+  mastodon-instance-url: "https://fosstodon.org"
   bluesky-enabled: "true"
-  bluesky-handle: ""
+  bluesky-handle: "rocky.lhotka.net"

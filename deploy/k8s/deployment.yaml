@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: social-agent
-          image: socialagent:latest
+          image: rockylhotka/socialagent:latest
           ports:
             - containerPort: 8080
           env:
