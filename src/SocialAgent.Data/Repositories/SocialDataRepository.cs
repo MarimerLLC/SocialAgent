@@ -56,12 +56,16 @@ public class SocialDataRepository(SocialAgentDbContext db) : ISocialDataReposito
     {
         foreach (var notification in notifications)
         {
-            var exists = await db.Notifications
-                .AnyAsync(n => n.ProviderId == notification.ProviderId && n.PlatformNotificationId == notification.PlatformNotificationId, ct);
+            var existing = await db.Notifications
+                .FirstOrDefaultAsync(n => n.ProviderId == notification.ProviderId && n.PlatformNotificationId == notification.PlatformNotificationId, ct);
 
-            if (!exists)
+            if (existing is null)
             {
                 db.Notifications.Add(notification);
+            }
+            else
+            {
+                existing.IsRead = notification.IsRead;
             }
         }
         await db.SaveChangesAsync(ct);

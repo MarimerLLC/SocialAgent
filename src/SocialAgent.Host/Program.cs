@@ -8,6 +8,7 @@ using SocialAgent.Analytics;
 using SocialAgent.Data;
 using SocialAgent.Host;
 using SocialAgent.Host.Auth;
+using SocialAgent.Host.Routing;
 using SocialAgent.Host.Services;
 using SocialAgent.Host.Telemetry;
 using SocialAgent.Providers.Bluesky;
@@ -47,6 +48,19 @@ builder.Services.AddHostedService<SocialMediaPollingService>();
 
 // Authentication (API key required in non-Development environments)
 builder.Services.AddApiKeyAuthentication(builder.Configuration);
+
+// LLM skill routing (optional — falls back to keyword matching if not configured)
+var llmSection = builder.Configuration.GetSection("LLM:Low");
+if (llmSection.Exists() && !string.IsNullOrEmpty(llmSection["ApiKey"]))
+{
+    builder.Services.Configure<SkillRouterOptions>(options =>
+    {
+        options.Endpoint = llmSection["Endpoint"] ?? string.Empty;
+        options.ApiKey = llmSection["ApiKey"] ?? string.Empty;
+        options.ModelId = llmSection["ModelId"] ?? string.Empty;
+    });
+    builder.Services.AddHttpClient<SkillRouter>();
+}
 
 // OpenTelemetry
 builder.Services.AddSocialAgentTelemetry();

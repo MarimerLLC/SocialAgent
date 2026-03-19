@@ -140,7 +140,8 @@ public class BlueskyProvider(
             Type = MapNotificationType(notification.Reason),
             FromHandle = notification.Author?.Handle ?? "unknown",
             CreatedAt = notification.IndexedAt,
-            Content = notification.Record?.Text
+            Content = notification.Record?.Text,
+            IsRead = notification.IsRead
         };
     }
 

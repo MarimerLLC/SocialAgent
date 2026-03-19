@@ -79,12 +79,26 @@ public class MastodonProvider(
     public async Task<IReadOnlyList<SocialNotification>> GetNotificationsAsync(DateTimeOffset? since = null, CancellationToken ct = default)
     {
         ConfigureClient();
+
+        // Fetch the last-read marker to determine read state
+        string? lastReadId = null;
+        try
+        {
+            var markers = await httpClient.GetFromJsonAsync<MastodonMarkersResponse>(
+                "/api/v1/markers?timeline[]=notifications", JsonOptions, ct);
+            lastReadId = markers?.Notifications?.LastReadId;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to fetch Mastodon notification markers, all will be marked unread");
+        }
+
         var url = "/api/v1/notifications?limit=40";
         var notifications = await httpClient.GetFromJsonAsync<List<MastodonNotification>>(url, JsonOptions, ct) ?? [];
 
         return notifications
             .Where(n => since is null || n.CreatedAt >= since)
-            .Select(MapToSocialNotification)
+            .Select(n => MapToSocialNotification(n, lastReadId))
             .ToList();
     }
 
@@ -114,8 +128,14 @@ public class MastodonProvider(
         };
     }
 
-    private SocialNotification MapToSocialNotification(MastodonNotification notification)
+    private SocialNotification MapToSocialNotification(MastodonNotification notification, string? lastReadId)
     {
+        // Mastodon IDs are numeric strings — notification is read if its ID <= lastReadId
+        var isRead = lastReadId is not null
+            && long.TryParse(notification.Id, out var notifId)
+            && long.TryParse(lastReadId, out var readId)
+            && notifId <= readId;
+
         return new SocialNotification
         {
             Id = $"mastodon:{notification.Id}",
@@ -125,7 +145,8 @@ public class MastodonProvider(
             FromHandle = notification.Account?.Acct ?? "unknown",
             CreatedAt = notification.CreatedAt,
             RelatedPostId = notification.Status?.Id is not null ? $"mastodon:{notification.Status.Id}" : null,
-            Content = notification.Status?.Content
+            Content = notification.Status?.Content,
+            IsRead = isRead
         };
     }
 
