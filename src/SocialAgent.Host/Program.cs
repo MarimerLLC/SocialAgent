@@ -3,17 +3,23 @@ using Microsoft.Agents.Builder.State;
 using Microsoft.Agents.Hosting.A2A;
 using Microsoft.Agents.Hosting.AspNetCore;
 using Microsoft.Agents.Storage;
+using Serilog;
 using SocialAgent.Analytics;
 using SocialAgent.Data;
 using SocialAgent.Host;
-using SocialAgent.Host.Services;
 using SocialAgent.Host.Auth;
+using SocialAgent.Host.Services;
+using SocialAgent.Host.Telemetry;
 using SocialAgent.Providers.Bluesky;
 using SocialAgent.Providers.Mastodon;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Configuration.AddUserSecrets<Program>(optional: true);
+
+// Serilog
+builder.Host.UseSerilog((context, configuration) => configuration
+    .ReadFrom.Configuration(context.Configuration));
 
 // Agent infrastructure
 builder.Services.AddSingleton<IStorage, MemoryStorage>();
@@ -42,10 +48,15 @@ builder.Services.AddHostedService<SocialMediaPollingService>();
 // Authentication (API key required in non-Development environments)
 builder.Services.AddApiKeyAuthentication(builder.Configuration);
 
+// OpenTelemetry
+builder.Services.AddSocialAgentTelemetry();
+
 // Health checks
 builder.Services.AddHealthChecks();
 
 var app = builder.Build();
+
+app.UseSerilogRequestLogging();
 
 app.UseAuthentication();
 app.UseAuthorization();
