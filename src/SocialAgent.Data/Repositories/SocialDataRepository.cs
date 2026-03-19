@@ -138,4 +138,18 @@ public class SocialDataRepository(SocialAgentDbContext db) : ISocialDataReposito
         }
         await db.SaveChangesAsync(ct);
     }
+
+    public async Task<int> PurgeOldPostsAsync(DateTimeOffset olderThan, CancellationToken ct = default)
+    {
+        return await db.Posts
+            .Where(p => p.CreatedAt < olderThan)
+            .ExecuteDeleteAsync(ct);
+    }
+
+    public async Task<int> PurgeOldNotificationsAsync(DateTimeOffset olderThan, CancellationToken ct = default)
+    {
+        return await db.Notifications
+            .Where(n => n.CreatedAt < olderThan)
+            .ExecuteDeleteAsync(ct);
+    }
 }

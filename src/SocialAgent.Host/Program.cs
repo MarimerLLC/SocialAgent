@@ -45,6 +45,7 @@ builder.Services.AddBlueskyProvider(builder.Configuration);
 // Background services
 builder.Services.AddHostedService<DatabaseMigrationService>();
 builder.Services.AddHostedService<SocialMediaPollingService>();
+builder.Services.AddHostedService<DataRetentionService>();
 
 // Authentication (API key required in non-Development environments)
 builder.Services.AddApiKeyAuthentication(builder.Configuration);
