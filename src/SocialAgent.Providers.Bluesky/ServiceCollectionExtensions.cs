@@ -16,10 +16,11 @@ public static class ServiceCollectionExtensions
 
         if (!options.Enabled) return services;
 
-        services.AddHttpClient<ISocialMediaProvider, BlueskyProvider>(client =>
+        services.AddHttpClient<BlueskyProvider>(client =>
         {
             client.BaseAddress = new Uri(options.ServiceUrl);
         });
+        services.AddSingleton<ISocialMediaProvider>(sp => sp.GetRequiredService<BlueskyProvider>());
 
         return services;
     }

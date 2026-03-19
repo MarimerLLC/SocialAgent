@@ -2,9 +2,9 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: social-agent-config
-  namespace: social-agent
+  namespace: rockbot
 data:
   mastodon-enabled: "true"
-  mastodon-instance-url: "https://mastodon.social"
+  mastodon-instance-url: "https://fosstodon.org"
   bluesky-enabled: "true"
-  bluesky-handle: ""
+  bluesky-handle: "rocky.lhotka.net"

@@ -2,7 +2,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: social-agent
-  namespace: social-agent
+  namespace: rockbot
 spec:
   selector:
     app: social-agent

@@ -16,10 +16,11 @@ public static class ServiceCollectionExtensions
 
         if (!options.Enabled) return services;
 
-        services.AddHttpClient<ISocialMediaProvider, MastodonProvider>(client =>
+        services.AddHttpClient<MastodonProvider>(client =>
         {
             client.BaseAddress = new Uri(options.InstanceUrl);
         });
+        services.AddSingleton<ISocialMediaProvider>(sp => sp.GetRequiredService<MastodonProvider>());
 
         return services;
     }

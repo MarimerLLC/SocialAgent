@@ -9,6 +9,7 @@ using Microsoft.Agents.Hosting.A2A.Protocol;
 using SocialAgent.Core.Analytics;
 using SocialAgent.Core.Providers;
 using SocialAgent.Data.Repositories;
+using SocialAgent.Host.Routing;
 
 namespace SocialAgent.Host;
 
@@ -87,12 +88,28 @@ public class SocialAgentHandler : AgentApplication, IAgentCardHandler
         return Task.FromResult(initialCard);
     }
 
+    private static readonly List<SkillRouter.SkillDefinition> SkillDefinitions =
+    [
+        new("engagement-summary", "Engagement Summary", "Get a summary of recent engagement across all connected social media platforms"),
+        new("top-posts", "Top Posts", "Get most-engaged posts ranked by total engagement"),
+        new("recent-mentions", "Recent Mentions", "Get recent mentions and replies across all connected platforms"),
+        new("follower-insights", "Follower Insights", "See who engages most with your content"),
+        new("platform-comparison", "Platform Comparison", "Compare engagement metrics across all connected platforms"),
+        new("check-notifications", "Check Notifications", "Get unread notifications across all connected platforms"),
+        new("provider-status", "Provider Status", "Check connectivity and health of all configured providers")
+    ];
+
     private async Task OnMessageAsync(ITurnContext turnContext, ITurnState turnState, CancellationToken ct)
     {
         var text = turnContext.Activity.Text?.Trim() ?? string.Empty;
-        var skillId = ExtractSkillId(text);
 
         using var scope = _scopeFactory.CreateScope();
+
+        // Try LLM routing first, fall back to keyword matching
+        var router = scope.ServiceProvider.GetService<SkillRouter>();
+        var skillId = router != null
+            ? await router.RouteAsync(text, SkillDefinitions, ct) ?? ExtractSkillId(text)
+            : ExtractSkillId(text);
 
         var result = skillId switch
         {
@@ -120,12 +137,39 @@ public class SocialAgentHandler : AgentApplication, IAgentCardHandler
         return Task.CompletedTask;
     }
 
+    private static readonly Dictionary<string, string[]> SkillKeywords = new()
+    {
+        ["engagement-summary"] = ["engagement summary", "engagement-summary"],
+        ["top-posts"] = ["top posts", "top-posts", "most engaged", "best posts"],
+        ["recent-mentions"] = ["recent mentions", "recent-mentions", "mentions"],
+        ["follower-insights"] = ["follower insights", "follower-insights", "followers", "engagers"],
+        ["platform-comparison"] = ["platform comparison", "platform-comparison", "compare platforms", "compare engagement"],
+        ["check-notifications"] = ["check notifications", "check-notifications", "notifications", "unread"],
+        ["provider-status"] = ["provider status", "provider-status", "connectivity", "health check"]
+    };
+
     private static string ExtractSkillId(string text)
     {
         var lower = text.ToLowerInvariant();
-        string[] skillIds = ["engagement-summary", "top-posts", "recent-mentions",
-            "follower-insights", "platform-comparison", "check-notifications", "provider-status"];
-        return skillIds.FirstOrDefault(s => lower.Contains(s)) ?? lower;
+
+        // Exact skill ID match first
+        foreach (var skill in SkillKeywords)
+        {
+            if (lower == skill.Key)
+                return skill.Key;
+        }
+
+        // Keyword match (longer keywords first to avoid partial matches)
+        foreach (var skill in SkillKeywords)
+        {
+            foreach (var keyword in skill.Value)
+            {
+                if (lower.Contains(keyword))
+                    return skill.Key;
+            }
+        }
+
+        return lower;
     }
 
     private static async Task<string> HandleEngagementSummaryAsync(IServiceProvider sp, CancellationToken ct)
