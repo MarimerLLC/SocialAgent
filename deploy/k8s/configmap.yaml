@@ -2,7 +2,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: social-agent-config
-  namespace: social-agent
+  namespace: rockbot
 data:
   mastodon-enabled: "true"
   mastodon-instance-url: "https://fosstodon.org"

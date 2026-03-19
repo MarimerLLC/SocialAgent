@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: social-agent
-  namespace: social-agent
+  namespace: rockbot
   labels:
     app: social-agent
 spec:
@@ -67,6 +67,27 @@ spec:
                 secretKeyRef:
                   name: social-agent-secrets
                   key: api-key
+            # LLM skill routing (from rockbot-secrets)
+            - name: LLM__Low__Endpoint
+              valueFrom:
+                secretKeyRef:
+                  name: rockbot-secrets
+                  key: LLM__Low__Endpoint
+            - name: LLM__Low__ApiKey
+              valueFrom:
+                secretKeyRef:
+                  name: rockbot-secrets
+                  key: LLM__Low__ApiKey
+            - name: LLM__Low__ModelId
+              valueFrom:
+                secretKeyRef:
+                  name: rockbot-secrets
+                  key: LLM__Low__ModelId
+            # OpenTelemetry
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://alloy.loki.svc.cluster.local:4317"
+            - name: OTEL_SERVICE_NAME
+              value: "social-agent"
           livenessProbe:
             httpGet:
               path: /health/live
