@@ -3,8 +3,11 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
-    <!-- Microsoft Agents A2A -->
-    <PackageVersion Include="Microsoft.Agents.Hosting.AspNetCore.A2A.Preview" Version="1.5.45-beta" />
+    <!-- Microsoft Agent Framework — A2A 1.0 hosting -->
+    <PackageVersion Include="Microsoft.Agents.AI.Hosting.A2A.AspNetCore" Version="1.3.0-preview.260423.1" />
+    <!-- Google A2A .NET SDK (transitively required; we use it directly for AgentCard, IAgentHandler, MapWellKnownAgentCard) -->
+    <PackageVersion Include="A2A" Version="1.0.0-preview2" />
+    <PackageVersion Include="A2A.AspNetCore" Version="1.0.0-preview2" />
 
     <!-- ASP.NET Core & Hosting -->
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
@@ -20,11 +23,11 @@
     <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageVersion Include="Serilog.Sinks.OpenTelemetry" Version="4.2.0" />
 
-    <!-- OpenTelemetry -->
-    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.0" />
-    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.0" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.1" />
-    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.15.0" />
+    <!-- OpenTelemetry — pinned to 1.15.3 to clear NU1902 vulnerability advisories -->
+    <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.15.3" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.15.2" />
+    <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.15.1" />
     <PackageVersion Include="Npgsql.OpenTelemetry" Version="10.0.2" />
 
     <!-- Health Checks -->

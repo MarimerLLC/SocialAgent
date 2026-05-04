@@ -1,8 +1,7 @@
-using Microsoft.Agents.Builder;
-using Microsoft.Agents.Builder.State;
-using Microsoft.Agents.Hosting.A2A;
-using Microsoft.Agents.Hosting.AspNetCore;
-using Microsoft.Agents.Storage;
+using System.Reflection;
+using A2A;
+using A2A.AspNetCore;
+using Microsoft.AspNetCore.Authorization;
 using Serilog;
 using SocialAgent.Analytics;
 using SocialAgent.Data;
@@ -22,15 +21,14 @@ builder.Configuration.AddUserSecrets<Program>(optional: true);
 builder.Host.UseSerilog((context, configuration) => configuration
     .ReadFrom.Configuration(context.Configuration));
 
-// Agent infrastructure
-builder.Services.AddSingleton<IStorage, MemoryStorage>();
-builder.AddAgentApplicationOptions();
-
-// Register the agent
-builder.AddAgent<SocialAgentHandler>();
-
-// Register A2A adapter
-builder.Services.AddA2AAdapter();
+// Register the stub AIAgent and the custom A2A handler under the same agent name.
+// The framework's AddA2AServer wires its A2AServer keyed by this name; because we register a
+// keyed IAgentHandler here, the framework's default A2AAgentHandler (which would call into the
+// AIAgent) is bypassed entirely.
+builder.Services.AddKeyedSingleton<Microsoft.Agents.AI.AIAgent, SocialAgentStubAgent>(SocialAgentStubAgent.AgentName);
+builder.Services.AddSingleton<SkillDispatcher>();
+builder.Services.AddKeyedSingleton<IAgentHandler, SocialAgentA2AHandler>(SocialAgentStubAgent.AgentName);
+builder.AddA2AServer(SocialAgentStubAgent.AgentName);
 
 // Data layer
 builder.Services.AddSocialAgentData(builder.Configuration);
@@ -76,11 +74,46 @@ app.UseSerilogRequestLogging();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Map A2A endpoints (no auth required for development)
-app.MapA2AEndpoints(requireAuth: !app.Environment.IsDevelopment());
+// Build the agent card. Path/URL is host-relative; clients consume it from /.well-known/agent-card.json.
+var agentVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
+var agentCard = new AgentCard
+{
+    Name = "SocialAgent",
+    Description = "Social media monitoring and analytics agent. " +
+        "Monitors Mastodon, Bluesky, and other platforms for posts, mentions, and engagement. " +
+        "Provides analytics on engagement trends, top posts, and follower insights.",
+    Version = agentVersion,
+    Skills = [.. SkillCatalog.AgentCardSkills],
+    DefaultInputModes = ["text"],
+    DefaultOutputModes = ["text"],
+    SupportedInterfaces =
+    [
+        new AgentInterface { Url = "/a2a", ProtocolBinding = "JSONRPC", ProtocolVersion = "1.0" },
+        new AgentInterface { Url = "/a2a", ProtocolBinding = "HTTPJSON", ProtocolVersion = "1.0" }
+    ]
+};
 
-// Health check endpoints
+// Map A2A endpoints. Both transports share the /a2a path — JSON-RPC handles POST /a2a, HTTP+JSON
+// handles the spec routes (e.g., /a2a/tasks/{id}, /a2a/message:send).
+var requireAuth = !app.Environment.IsDevelopment();
+var jsonRpcEndpoints = app.MapA2AJsonRpc(SocialAgentStubAgent.AgentName, "/a2a");
+var httpJsonEndpoints = app.MapA2AHttpJson(SocialAgentStubAgent.AgentName, "/a2a");
+var agentCardEndpoints = app.MapWellKnownAgentCard(agentCard);
+
+if (requireAuth)
+{
+    var policy = new AuthorizationPolicyBuilder(ApiKeyAuthenticationHandler.SchemeName)
+        .RequireAuthenticatedUser()
+        .Build();
+    jsonRpcEndpoints.RequireAuthorization(policy);
+    httpJsonEndpoints.RequireAuthorization(policy);
+    // Agent card stays anonymous so clients can discover capabilities without credentials.
+}
+
+// Health check endpoints (anonymous)
 app.MapHealthChecks("/health/ready");
 app.MapHealthChecks("/health/live");
 
 app.Run();
+
+public partial class Program { }
