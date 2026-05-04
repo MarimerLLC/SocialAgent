@@ -139,6 +139,27 @@ public class SocialDataRepository(SocialAgentDbContext db) : ISocialDataReposito
         await db.SaveChangesAsync(ct);
     }
 
+    public async Task<ProviderToken?> GetProviderTokenAsync(string providerId, CancellationToken ct = default)
+    {
+        return await db.ProviderTokens.FindAsync([providerId], ct);
+    }
+
+    public async Task UpsertProviderTokenAsync(ProviderToken token, CancellationToken ct = default)
+    {
+        var existing = await db.ProviderTokens.FindAsync([token.ProviderId], ct);
+        if (existing is null)
+        {
+            db.ProviderTokens.Add(token);
+        }
+        else
+        {
+            existing.AccessToken = token.AccessToken;
+            existing.ExpiresAt = token.ExpiresAt;
+            existing.UpdatedAt = DateTimeOffset.UtcNow;
+        }
+        await db.SaveChangesAsync(ct);
+    }
+
     public async Task<int> PurgeOldPostsAsync(DateTimeOffset olderThan, CancellationToken ct = default)
     {
         return await db.Posts

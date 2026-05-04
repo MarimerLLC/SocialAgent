@@ -34,7 +34,8 @@ SocialAgent is an **A2A-enabled social media monitoring agent** built on .NET 10
 - **`src/SocialAgent.Analytics/`** — Analytics engine computing engagement summaries, top posts, follower insights, platform comparisons
 - **`src/SocialAgent.Providers.Mastodon/`** — Mastodon REST API client implementing `ISocialMediaProvider`
 - **`src/SocialAgent.Providers.Bluesky/`** — Bluesky AT Protocol client implementing `ISocialMediaProvider`
-- **`src/SocialAgent.Host/`** — ASP.NET Core host, A2A request handler (`SocialAgentA2AHandler` implementing `A2A.IAgentHandler`), skill dispatcher (`SkillDispatcher`), skill metadata (`SkillCatalog`), stub `AIAgent` (`SocialAgentStubAgent`, framework-required name carrier), background polling service
+- **`src/SocialAgent.Providers.Threads/`** — Threads Graph API v1.0 client implementing `ISocialMediaProvider`. Adds `ThreadsTokenStore` (in-memory current token + expiry) and a `RefreshTokenAsync` method on the provider; the host owns the refresh schedule via `ThreadsTokenRefreshService`.
+- **`src/SocialAgent.Host/`** — ASP.NET Core host, A2A request handler (`SocialAgentA2AHandler` implementing `A2A.IAgentHandler`), skill dispatcher (`SkillDispatcher`), skill metadata (`SkillCatalog`), stub `AIAgent` (`SocialAgentStubAgent`, framework-required name carrier), background polling service, and `ThreadsTokenRefreshService` (registered only when Threads is enabled — seeds the token from DB on startup, refreshes ahead of `RefreshThresholdDays`, persists via `ISocialDataRepository`)
 - **`tests/`** — MSTest unit tests with NSubstitute for mocking
 - **`deploy/k8s/`** — Kubernetes manifests (Deployment, Service, ConfigMap, Secret)
 
@@ -62,7 +63,7 @@ Each provider implements `ISocialMediaProvider` and is registered via DI extensi
 - **Async-first** — all I/O is Task-based
 - **NSubstitute** is the mocking framework for tests
 - **Configuration** — standard .NET config stack: `appsettings.json`, environment variables, user secrets, k8s Secrets
-- **Database** — EF Core with SQLite for dev, PostgreSQL for prod. `DatabaseMigrationService` runs `EnsureCreatedAsync` on startup.
+- **Database** — EF Core with SQLite for dev, PostgreSQL for prod. `DatabaseMigrationService` runs `EnsureCreatedAsync` plus dialect-aware `CREATE TABLE IF NOT EXISTS` patches for tables added after the initial deployment (e.g. `ProviderTokens` in 1.4.0). When adding a new table, extend `DatabaseMigrationService.EnsureProviderTokensTableAsync`-style patch logic so existing live databases pick up the change. This is an interim approach until proper EF Core migrations are adopted.
 
 ### Future Integration
 

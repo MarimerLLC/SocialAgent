@@ -5,6 +5,7 @@
     <Project Path="src/SocialAgent.Analytics/SocialAgent.Analytics.csproj" />
     <Project Path="src/SocialAgent.Providers.Mastodon/SocialAgent.Providers.Mastodon.csproj" />
     <Project Path="src/SocialAgent.Providers.Bluesky/SocialAgent.Providers.Bluesky.csproj" />
+    <Project Path="src/SocialAgent.Providers.Threads/SocialAgent.Providers.Threads.csproj" />
     <Project Path="src/SocialAgent.Host/SocialAgent.Host.csproj" />
   </Folder>
   <Folder Name="/tests/">
@@ -12,5 +13,6 @@
     <Project Path="tests/SocialAgent.Analytics.Tests/SocialAgent.Analytics.Tests.csproj" />
     <Project Path="tests/SocialAgent.Providers.Mastodon.Tests/SocialAgent.Providers.Mastodon.Tests.csproj" />
     <Project Path="tests/SocialAgent.Providers.Bluesky.Tests/SocialAgent.Providers.Bluesky.Tests.csproj" />
+    <Project Path="tests/SocialAgent.Providers.Threads.Tests/SocialAgent.Providers.Threads.Tests.csproj" />
   </Folder>
 </Solution>

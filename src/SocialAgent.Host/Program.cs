@@ -12,6 +12,7 @@ using SocialAgent.Host.Services;
 using SocialAgent.Host.Telemetry;
 using SocialAgent.Providers.Bluesky;
 using SocialAgent.Providers.Mastodon;
+using SocialAgent.Providers.Threads;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -39,9 +40,16 @@ builder.Services.AddSocialAgentAnalytics();
 // Social media providers
 builder.Services.AddMastodonProvider(builder.Configuration);
 builder.Services.AddBlueskyProvider(builder.Configuration);
+builder.Services.AddThreadsProvider(builder.Configuration);
 
 // Background services
 builder.Services.AddHostedService<DatabaseMigrationService>();
+if (builder.Configuration.GetValue<bool>("SocialAgent:Providers:Threads:Enabled"))
+{
+    // Registered after the migration service so the database table exists when the
+    // refresh service first reads or writes the persisted token.
+    builder.Services.AddHostedService<ThreadsTokenRefreshService>();
+}
 builder.Services.AddHostedService<SocialMediaPollingService>();
 builder.Services.AddHostedService<DataRetentionService>();
 
@@ -84,7 +92,7 @@ var agentCard = new AgentCard
 {
     Name = "SocialAgent",
     Description = "Social media monitoring and analytics agent. " +
-        "Monitors Mastodon, Bluesky, and other platforms for posts, mentions, and engagement. " +
+        "Monitors Mastodon, Bluesky, Threads, and other platforms for posts, mentions, and engagement. " +
         "Provides analytics on engagement trends, top posts, and follower insights.",
     Version = agentVersion,
     Skills = [.. SkillCatalog.AgentCardSkills],
