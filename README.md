@@ -12,6 +12,7 @@ SocialAgent monitors your social media accounts across multiple platforms, colle
 |---|---|---|
 | Mastodon | ✅ Implemented | REST API v1 |
 | Bluesky | ✅ Implemented | AT Protocol |
+| Threads | ✅ Implemented | Threads Graph API v1.0 (with auto token refresh) |
 
 ### A2A Skills
 
@@ -73,7 +74,15 @@ dotnet user-secrets set "SocialAgent:Providers:Mastodon:AccessToken" "your-token
 dotnet user-secrets set "SocialAgent:Providers:Bluesky:Enabled" "true"
 dotnet user-secrets set "SocialAgent:Providers:Bluesky:Handle" "you.bsky.social"
 dotnet user-secrets set "SocialAgent:Providers:Bluesky:AppPassword" "your-app-password"
+
+# Set Threads credentials (long-lived token; auto-refreshes ahead of expiry)
+dotnet user-secrets set "SocialAgent:Providers:Threads:Enabled" "true"
+dotnet user-secrets set "SocialAgent:Providers:Threads:AccessToken" "your-long-lived-token"
 ```
+
+For Threads-specific setup (OAuth scopes, Meta App Review,
+`IncludePostInsights` tradeoffs, token-refresh behavior), see
+[`docs/providers/threads.md`](docs/providers/threads.md).
 
 ### Database
 
@@ -96,23 +105,25 @@ The agent runs as a continuous Deployment (not CronJob) for A2A responsiveness.
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  SocialAgent.Host (ASP.NET Core)                        │
-│                                                         │
-│  ┌──────────────┐  ┌─────────────────────────────────┐  │
-│  │ A2A 1.0      │  │ Background Polling Services     │  │
-│  │ (MS Agent    │  │ ┌───────────┐ ┌──────────────┐ │  │
-│  │  Framework + │  │ │ Mastodon  │ │   Bluesky    │ │  │
-│  │  A2A SDK)    │  │ │ Provider  │ │   Provider   │ │  │
-│  └──────┬───────┘  │ └─────┬─────┘ └──────┬───────┘ │  │
-│         │           └───────┼───────────────┼─────────┘  │
-│  ┌──────▼───────────────────▼───────────────▼─────────┐  │
-│  │            Core (Domain Models & Interfaces)        │  │
-│  └──────────────────────┬─────────────────────────────┘  │
-│  ┌──────────────────────▼─────────────────────────────┐  │
-│  │       Data (EF Core — PostgreSQL / SQLite)          │  │
-│  └─────────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│  SocialAgent.Host (ASP.NET Core)                                     │
+│                                                                      │
+│  ┌──────────────┐  ┌──────────────────────────────────────────────┐  │
+│  │ A2A 1.0      │  │ Background Services                          │  │
+│  │ (MS Agent    │  │ ┌───────────┐ ┌──────────┐ ┌──────────────┐ │  │
+│  │  Framework + │  │ │ Mastodon  │ │ Bluesky  │ │   Threads    │ │  │
+│  │  A2A SDK)    │  │ │ Provider  │ │ Provider │ │   Provider   │ │  │
+│  └──────┬───────┘  │ └─────┬─────┘ └────┬─────┘ └──────┬───────┘ │  │
+│         │           │       │            │              │         │  │
+│         │           │ + ThreadsTokenRefreshService (auto refresh)│  │
+│         │           └───────┼────────────┼──────────────┼─────────┘  │
+│  ┌──────▼─────────────────  ▼            ▼              ▼─────────┐  │
+│  │            Core (Domain Models & Interfaces)                   │  │
+│  └─────────────────────────────┬──────────────────────────────────┘  │
+│  ┌─────────────────────────────▼──────────────────────────────────┐  │
+│  │       Data (EF Core — PostgreSQL / SQLite)                     │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Adding a New Provider

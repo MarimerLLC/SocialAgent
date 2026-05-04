@@ -2,7 +2,7 @@
   <PropertyGroup>
     <RootNamespace>SocialAgent.Host</RootNamespace>
     <UserSecretsId>socialagent-host-001</UserSecretsId>
-    <Version>1.3.4</Version>
+    <Version>1.4.0</Version>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI.Hosting.A2A.AspNetCore" />
@@ -26,5 +26,6 @@
     <ProjectReference Include="..\SocialAgent.Analytics\SocialAgent.Analytics.csproj" />
     <ProjectReference Include="..\SocialAgent.Providers.Mastodon\SocialAgent.Providers.Mastodon.csproj" />
     <ProjectReference Include="..\SocialAgent.Providers.Bluesky\SocialAgent.Providers.Bluesky.csproj" />
+    <ProjectReference Include="..\SocialAgent.Providers.Threads\SocialAgent.Providers.Threads.csproj" />
   </ItemGroup>
 </Project>

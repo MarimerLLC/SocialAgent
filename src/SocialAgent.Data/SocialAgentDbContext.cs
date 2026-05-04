@@ -9,6 +9,7 @@ public class SocialAgentDbContext(DbContextOptions<SocialAgentDbContext> options
     public DbSet<SocialNotification> Notifications => Set<SocialNotification>();
     public DbSet<SocialProfile> Profiles => Set<SocialProfile>();
     public DbSet<PollState> PollStates => Set<PollState>();
+    public DbSet<ProviderToken> ProviderTokens => Set<ProviderToken>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -34,6 +35,11 @@ public class SocialAgentDbContext(DbContextOptions<SocialAgentDbContext> options
         });
 
         modelBuilder.Entity<PollState>(entity =>
+        {
+            entity.HasKey(e => e.ProviderId);
+        });
+
+        modelBuilder.Entity<ProviderToken>(entity =>
         {
             entity.HasKey(e => e.ProviderId);
         });

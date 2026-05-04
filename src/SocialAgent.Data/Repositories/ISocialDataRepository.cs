@@ -22,6 +22,10 @@ public interface ISocialDataRepository
     Task<PollState?> GetPollStateAsync(string providerId, CancellationToken ct = default);
     Task UpsertPollStateAsync(PollState state, CancellationToken ct = default);
 
+    // Provider Tokens (for refreshable OAuth bearer tokens)
+    Task<ProviderToken?> GetProviderTokenAsync(string providerId, CancellationToken ct = default);
+    Task UpsertProviderTokenAsync(ProviderToken token, CancellationToken ct = default);
+
     // Retention
     Task<int> PurgeOldPostsAsync(DateTimeOffset olderThan, CancellationToken ct = default);
     Task<int> PurgeOldNotificationsAsync(DateTimeOffset olderThan, CancellationToken ct = default);
