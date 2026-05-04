@@ -12,11 +12,12 @@ internal sealed class SocialAgentA2AHandler(SkillDispatcher dispatcher, ILogger<
 
         var userText = context.UserText ?? string.Empty;
         var explicitSkillId = ReadSkillIdFromMetadata(context);
+        var parameters = context.Message?.Metadata;
 
         string responseText;
         try
         {
-            responseText = await dispatcher.DispatchAsync(explicitSkillId, userText, cancellationToken);
+            responseText = await dispatcher.DispatchAsync(explicitSkillId, userText, parameters, cancellationToken);
         }
         catch (OperationCanceledException)
         {

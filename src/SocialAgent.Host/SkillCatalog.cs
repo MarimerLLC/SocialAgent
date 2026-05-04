@@ -5,56 +5,65 @@ namespace SocialAgent.Host;
 
 internal static class SkillCatalog
 {
+    // Skill parameters arrive as flat keys on message.metadata, alongside metadata.skill. Parameter
+    // keys are documented per-skill below. Unknown keys are ignored. Parameter values may be JSON
+    // strings, numbers, or ISO-8601 timestamps as appropriate; the dispatcher coerces strings to
+    // numbers/dates where needed.
     public static IReadOnlyList<AgentSkill> AgentCardSkills { get; } =
     [
         new()
         {
             Id = "engagement-summary",
             Name = "Engagement Summary",
-            Description = "Get a summary of recent engagement across all connected social media platforms. " +
-                "Returns total likes, reposts, replies, mentions, new followers, and averages per post.",
+            Description = "Get a summary of recent engagement. Returns total likes, reposts, replies, mentions, new followers, and averages per post. " +
+                "Optional metadata parameters: providerId (string, e.g. \"mastodon\" or \"bluesky\"; default: union across all providers), since (ISO-8601 timestamp; default: last 7 days).",
             Tags = ["social", "analytics", "engagement"]
         },
         new()
         {
             Id = "top-posts",
             Name = "Top Posts",
-            Description = "Get your most-engaged posts over a configurable time period, ranked by total engagement (likes + reposts + replies).",
+            Description = "Get your most-engaged posts ranked by total engagement (likes + reposts + replies). " +
+                "Optional metadata parameters: providerId (string), count (integer, default 10), since (ISO-8601 timestamp).",
             Tags = ["social", "analytics", "posts"]
         },
         new()
         {
             Id = "recent-mentions",
             Name = "Recent Mentions",
-            Description = "Get recent mentions and replies across all connected platforms.",
+            Description = "Get recent mentions and replies. " +
+                "Optional metadata parameters: providerId (string; default: union), count (integer, default 20).",
             Tags = ["social", "mentions", "notifications"]
         },
         new()
         {
             Id = "follower-insights",
             Name = "Follower Insights",
-            Description = "See who engages most with your content and their interaction patterns.",
+            Description = "See who engages most with your content and their interaction patterns. " +
+                "Optional metadata parameters: providerId (string), count (integer, default 10), since (ISO-8601 timestamp).",
             Tags = ["social", "analytics", "followers"]
         },
         new()
         {
             Id = "platform-comparison",
             Name = "Platform Comparison",
-            Description = "Compare engagement metrics across all connected social media platforms.",
+            Description = "Compare engagement metrics across all connected social media platforms. " +
+                "Optional metadata parameters: since (ISO-8601 timestamp; default: last 7 days). This skill is always all-platforms by design.",
             Tags = ["social", "analytics", "comparison"]
         },
         new()
         {
             Id = "check-notifications",
             Name = "Check Notifications",
-            Description = "Get unread notifications across all connected platforms.",
+            Description = "Get unread notifications. " +
+                "Optional metadata parameters: providerId (string; default: union).",
             Tags = ["social", "notifications"]
         },
         new()
         {
             Id = "provider-status",
             Name = "Provider Status",
-            Description = "Check connectivity and health of all configured social media providers.",
+            Description = "Check connectivity and health of all configured social media providers. Takes no parameters.",
             Tags = ["social", "status", "health"]
         }
     ];
