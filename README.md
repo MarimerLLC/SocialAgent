@@ -50,9 +50,11 @@ The agent starts on `http://localhost:5000` by default (or as configured by `ASP
 
 ### A2A Endpoints
 
-- `GET /.well-known/agent.json` — Agent card (A2A spec)
-- `GET /a2a/.well-known/agent-card.json` — Agent card (alternate)
-- `POST /a2a` — JSON-RPC task interface
+The agent speaks **A2A protocol version 1.0**.
+
+- `GET /.well-known/agent-card.json` — Agent card (A2A 1.0 discovery)
+- `POST /a2a` — JSON-RPC binding (`SendMessage`, `GetTask`, etc.)
+- `POST /a2a/message:send`, `GET /a2a/tasks/{id}`, etc. — HTTP+JSON binding
 - `GET /health/ready` — Readiness probe
 - `GET /health/live` — Liveness probe
 
@@ -98,10 +100,10 @@ The agent runs as a continuous Deployment (not CronJob) for A2A responsiveness.
 │  SocialAgent.Host (ASP.NET Core)                        │
 │                                                         │
 │  ┌──────────────┐  ┌─────────────────────────────────┐  │
-│  │ A2A Endpoints │  │ Background Polling Services     │  │
-│  │ (MS Agents    │  │ ┌───────────┐ ┌──────────────┐ │  │
-│  │  Framework)   │  │ │ Mastodon  │ │   Bluesky    │ │  │
-│  │               │  │ │ Provider  │ │   Provider   │ │  │
+│  │ A2A 1.0      │  │ Background Polling Services     │  │
+│  │ (MS Agent    │  │ ┌───────────┐ ┌──────────────┐ │  │
+│  │  Framework + │  │ │ Mastodon  │ │   Bluesky    │ │  │
+│  │  A2A SDK)    │  │ │ Provider  │ │   Provider   │ │  │
 │  └──────┬───────┘  │ └─────┬─────┘ └──────┬───────┘ │  │
 │         │           └───────┼───────────────┼─────────┘  │
 │  ┌──────▼───────────────────▼───────────────▼─────────┐  │

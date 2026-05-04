@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
         - name: social-agent
-          image: rockylhotka/socialagent:latest
+          image: rockylhotka/socialagent:1.3.4
           ports:
             - containerPort: 8080
           env:
@@ -27,6 +27,11 @@ spec:
               value: "http://+:8080"
             - name: SocialAgent__DatabaseProvider
               value: "PostgreSQL"
+            - name: SocialAgent__PublicBaseUrl
+              valueFrom:
+                configMapKeyRef:
+                  name: social-agent-config
+                  key: public-base-url
             - name: ConnectionStrings__SocialAgent
               valueFrom:
                 secretKeyRef:

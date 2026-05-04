@@ -8,3 +8,4 @@ data:
   mastodon-instance-url: "https://fosstodon.org"
   bluesky-enabled: "true"
   bluesky-handle: "rocky.lhotka.net"
+  public-base-url: "http://social-agent.rockbot.svc.cluster.local"

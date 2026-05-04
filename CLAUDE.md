@@ -23,7 +23,7 @@ dotnet test SocialAgent.slnx --verbosity normal
 
 ## Architecture
 
-SocialAgent is an **A2A-enabled social media monitoring agent** built on .NET 10. It uses the **Microsoft Agents Framework** (`Microsoft.Agents.Hosting.AspNetCore.A2A.Preview`) for A2A protocol support and runs as an ASP.NET Core application in Kubernetes.
+SocialAgent is an **A2A-enabled social media monitoring agent** built on .NET 10. It hosts the **A2A 1.0** protocol via the **Microsoft Agent Framework** (`Microsoft.Agents.AI.Hosting.A2A.AspNetCore`) and the upstream **A2A .NET SDK** (`A2A`, `A2A.AspNetCore`), running as an ASP.NET Core application in Kubernetes.
 
 **Core design principle:** Plugin-based provider architecture with normalized data models. Each social media platform is an independent provider assembly.
 
@@ -34,18 +34,20 @@ SocialAgent is an **A2A-enabled social media monitoring agent** built on .NET 10
 - **`src/SocialAgent.Analytics/`** — Analytics engine computing engagement summaries, top posts, follower insights, platform comparisons
 - **`src/SocialAgent.Providers.Mastodon/`** — Mastodon REST API client implementing `ISocialMediaProvider`
 - **`src/SocialAgent.Providers.Bluesky/`** — Bluesky AT Protocol client implementing `ISocialMediaProvider`
-- **`src/SocialAgent.Host/`** — ASP.NET Core host, A2A agent handler (`SocialAgentHandler`), background polling service
+- **`src/SocialAgent.Host/`** — ASP.NET Core host, A2A request handler (`SocialAgentA2AHandler` implementing `A2A.IAgentHandler`), skill dispatcher (`SkillDispatcher`), skill metadata (`SkillCatalog`), stub `AIAgent` (`SocialAgentStubAgent`, framework-required name carrier), background polling service
 - **`tests/`** — MSTest unit tests with NSubstitute for mocking
 - **`deploy/k8s/`** — Kubernetes manifests (Deployment, Service, ConfigMap, Secret)
 
 ### A2A Protocol
 
-The agent exposes the Google A2A protocol via the Microsoft Agents SDK:
-- **`GET /.well-known/agent.json`** — Agent card with skills (A2A spec)
-- **`GET /a2a/.well-known/agent-card.json`** — Agent card (alternate)
-- **`POST /a2a`** — JSON-RPC message handling
+The agent speaks **A2A protocol version 1.0**. Endpoints:
+- **`GET /.well-known/agent-card.json`** — Agent card (A2A 1.0 discovery path)
+- **`POST /a2a`** — JSON-RPC binding (methods: `SendMessage`, `GetTask`, etc., per `A2A.A2AMethods`)
+- **`POST /a2a/message:send`**, **`/a2a/tasks/{id}`**, etc. — HTTP+JSON binding routes
 
-Seven skills are exposed: `engagement-summary`, `top-posts`, `recent-mentions`, `follower-insights`, `platform-comparison`, `check-notifications`, `provider-status`.
+Both transports are mapped to the same `/a2a` prefix; clients pick whichever they prefer.
+
+Seven skills are exposed: `engagement-summary`, `top-posts`, `recent-mentions`, `follower-insights`, `platform-comparison`, `check-notifications`, `provider-status`. Skill dispatch is deterministic (keyword match, optionally LLM-assisted via `SkillRouter`) — there is no LLM in the request path by default. The `AIAgent` registered with the framework is a stub used only as a name carrier; all request handling flows through `SocialAgentA2AHandler`.
 
 ### Provider Plugin Pattern
 
