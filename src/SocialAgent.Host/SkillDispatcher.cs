@@ -22,10 +22,11 @@ internal sealed class SkillDispatcher(IServiceScopeFactory scopeFactory, ILogger
         using var scope = scopeFactory.CreateScope();
 
         string skillId;
+        var parameterSummary = SummarizeParameters(parameters);
         if (!string.IsNullOrWhiteSpace(explicitSkillId) && SkillCatalog.IsKnownSkill(explicitSkillId))
         {
             skillId = explicitSkillId;
-            logger.LogInformation("Dispatching skill {SkillId} (from request metadata)", skillId);
+            logger.LogInformation("Dispatching skill {SkillId} (from request metadata) parameters={Parameters}", skillId, parameterSummary);
         }
         else
         {
@@ -33,7 +34,7 @@ internal sealed class SkillDispatcher(IServiceScopeFactory scopeFactory, ILogger
             skillId = router != null
                 ? await router.RouteAsync(text, SkillCatalog.RouterDefinitions, ct) ?? SkillCatalog.MatchSkillByKeywords(text)
                 : SkillCatalog.MatchSkillByKeywords(text);
-            logger.LogInformation("Dispatching skill {SkillId} (routed from text \"{Input}\")", skillId, text);
+            logger.LogInformation("Dispatching skill {SkillId} (routed from text \"{Input}\") parameters={Parameters}", skillId, text, parameterSummary);
         }
 
         var p = new SkillParameters(parameters);
@@ -111,6 +112,23 @@ internal sealed class SkillDispatcher(IServiceScopeFactory scopeFactory, ILogger
     }
 
     private static string FormatJson(object data) => JsonSerializer.Serialize(data, JsonPretty);
+
+    // Compact summary of incoming metadata for logging — recognized keys only, with skill/skillId
+    // dropped because they are already logged separately. Returns "{}" when nothing recognized.
+    private static string SummarizeParameters(IReadOnlyDictionary<string, JsonElement>? parameters)
+    {
+        if (parameters is null || parameters.Count == 0) return "{}";
+        var recognized = new[] { "providerId", "count", "since" };
+        var parts = new List<string>();
+        foreach (var key in recognized)
+        {
+            if (parameters.TryGetValue(key, out var element) && element.ValueKind != JsonValueKind.Null)
+            {
+                parts.Add($"{key}={element.ToString()}");
+            }
+        }
+        return parts.Count == 0 ? "{}" : "{" + string.Join(", ", parts) + "}";
+    }
 
     private readonly struct SkillParameters
     {
