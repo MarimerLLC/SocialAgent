@@ -74,8 +74,12 @@ app.UseSerilogRequestLogging();
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Build the agent card. Path/URL is host-relative; clients consume it from /.well-known/agent-card.json.
+// Build the agent card. The A2A v1.0 spec example shows interface URLs as absolute URLs, so
+// when SocialAgent:PublicBaseUrl is configured we emit absolute URLs there. In dev, where the
+// public base is unknown, we fall back to the relative path "/a2a".
 var agentVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
+var publicBaseUrl = builder.Configuration["SocialAgent:PublicBaseUrl"]?.TrimEnd('/');
+var a2aInterfaceUrl = string.IsNullOrEmpty(publicBaseUrl) ? "/a2a" : $"{publicBaseUrl}/a2a";
 var agentCard = new AgentCard
 {
     Name = "SocialAgent",
@@ -88,8 +92,8 @@ var agentCard = new AgentCard
     DefaultOutputModes = ["text"],
     SupportedInterfaces =
     [
-        new AgentInterface { Url = "/a2a", ProtocolBinding = "JSONRPC", ProtocolVersion = "1.0" },
-        new AgentInterface { Url = "/a2a", ProtocolBinding = "HTTPJSON", ProtocolVersion = "1.0" }
+        new AgentInterface { Url = a2aInterfaceUrl, ProtocolBinding = "JSONRPC", ProtocolVersion = "1.0" },
+        new AgentInterface { Url = a2aInterfaceUrl, ProtocolBinding = "HTTPJSON", ProtocolVersion = "1.0" }
     ]
 };
 
