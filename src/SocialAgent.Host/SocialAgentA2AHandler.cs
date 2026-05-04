@@ -1,3 +1,4 @@
+using System.Text.Json;
 using A2A;
 
 namespace SocialAgent.Host;
@@ -10,11 +11,12 @@ internal sealed class SocialAgentA2AHandler(SkillDispatcher dispatcher, ILogger<
         ArgumentNullException.ThrowIfNull(eventQueue);
 
         var userText = context.UserText ?? string.Empty;
+        var explicitSkillId = ReadSkillIdFromMetadata(context);
 
         string responseText;
         try
         {
-            responseText = await dispatcher.DispatchAsync(userText, cancellationToken);
+            responseText = await dispatcher.DispatchAsync(explicitSkillId, userText, cancellationToken);
         }
         catch (OperationCanceledException)
         {
@@ -35,5 +37,25 @@ internal sealed class SocialAgentA2AHandler(SkillDispatcher dispatcher, ILogger<
         };
 
         await eventQueue.EnqueueMessageAsync(reply, cancellationToken);
+    }
+
+    // Skill ID can arrive on the message (per RockBot's BuildV1SendRequest) or on the request envelope.
+    // The "skill" key on either Metadata dictionary wins; an "skillId" key is also accepted as a fallback
+    // because the spec doesn't yet standardize the field name and clients vary.
+    private static string? ReadSkillIdFromMetadata(RequestContext context)
+    {
+        return ReadString(context.Message?.Metadata, "skill")
+            ?? ReadString(context.Message?.Metadata, "skillId")
+            ?? ReadString(context.Metadata, "skill")
+            ?? ReadString(context.Metadata, "skillId");
+    }
+
+    private static string? ReadString(Dictionary<string, JsonElement>? metadata, string key)
+    {
+        if (metadata is null || !metadata.TryGetValue(key, out var element))
+        {
+            return null;
+        }
+        return element.ValueKind == JsonValueKind.String ? element.GetString() : null;
     }
 }

@@ -81,6 +81,19 @@ internal static class SkillCatalog
         ["provider-status"] = ["provider status", "provider-status", "connectivity", "health check"]
     };
 
+    private static readonly HashSet<string> KnownSkillIds = new(StringComparer.Ordinal)
+    {
+        "engagement-summary",
+        "top-posts",
+        "recent-mentions",
+        "follower-insights",
+        "platform-comparison",
+        "check-notifications",
+        "provider-status"
+    };
+
+    public static bool IsKnownSkill(string id) => KnownSkillIds.Contains(id);
+
     public static string MatchSkillByKeywords(string text)
     {
         var lower = text.ToLowerInvariant();

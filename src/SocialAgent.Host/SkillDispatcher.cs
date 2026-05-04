@@ -10,18 +10,26 @@ internal sealed class SkillDispatcher(IServiceScopeFactory scopeFactory, ILogger
 {
     private static readonly JsonSerializerOptions JsonPretty = new() { WriteIndented = true };
 
-    public async Task<string> DispatchAsync(string userText, CancellationToken ct)
+    public async Task<string> DispatchAsync(string? explicitSkillId, string userText, CancellationToken ct)
     {
         var text = userText?.Trim() ?? string.Empty;
 
         using var scope = scopeFactory.CreateScope();
 
-        var router = scope.ServiceProvider.GetService<SkillRouter>();
-        var skillId = router != null
-            ? await router.RouteAsync(text, SkillCatalog.RouterDefinitions, ct) ?? SkillCatalog.MatchSkillByKeywords(text)
-            : SkillCatalog.MatchSkillByKeywords(text);
-
-        logger.LogInformation("Dispatching skill {SkillId} for input \"{Input}\"", skillId, text);
+        string skillId;
+        if (!string.IsNullOrWhiteSpace(explicitSkillId) && SkillCatalog.IsKnownSkill(explicitSkillId))
+        {
+            skillId = explicitSkillId;
+            logger.LogInformation("Dispatching skill {SkillId} (from request metadata)", skillId);
+        }
+        else
+        {
+            var router = scope.ServiceProvider.GetService<SkillRouter>();
+            skillId = router != null
+                ? await router.RouteAsync(text, SkillCatalog.RouterDefinitions, ct) ?? SkillCatalog.MatchSkillByKeywords(text)
+                : SkillCatalog.MatchSkillByKeywords(text);
+            logger.LogInformation("Dispatching skill {SkillId} (routed from text \"{Input}\")", skillId, text);
+        }
 
         return skillId switch
         {
