@@ -46,7 +46,7 @@ public class BlueskyProvider(
                 $"/xrpc/app.bsky.actor.getProfile?actor={Uri.EscapeDataString(session.Did)}", ct);
             return true;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "Bluesky connection validation failed");
             return false;
@@ -254,7 +254,7 @@ public class BlueskyProvider(
                         "Bluesky session refresh returned {Status}; falling back to a full login",
                         response.StatusCode);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
                     logger.LogWarning(ex, "Bluesky session refresh failed; falling back to a full login");
                 }

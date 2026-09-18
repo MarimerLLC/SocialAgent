@@ -50,7 +50,7 @@ public class MastodonProvider(
             using var response = await client.SendAsync(request, ct);
             return response.IsSuccessStatusCode;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "Mastodon connection validation failed");
             return false;
@@ -129,7 +129,7 @@ public class MastodonProvider(
                 "/api/v1/markers?timeline[]=notifications", ct);
             lastReadId = markers?.Notifications?.LastReadId;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "Failed to fetch Mastodon notification markers, all will be marked unread");
         }

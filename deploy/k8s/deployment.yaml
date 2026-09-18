@@ -82,16 +82,19 @@ spec:
                 configMapKeyRef:
                   name: social-agent-config
                   key: threads-enabled
+                  optional: true
             - name: SocialAgent__Providers__Threads__IncludePostInsights
               valueFrom:
                 configMapKeyRef:
                   name: social-agent-config
                   key: threads-include-post-insights
+                  optional: true
             - name: SocialAgent__Providers__Threads__AccessToken
               valueFrom:
                 secretKeyRef:
                   name: social-agent-secrets
                   key: threads-access-token
+                  optional: true
             - name: Authentication__ApiKey
               valueFrom:
                 secretKeyRef:

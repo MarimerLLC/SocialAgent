@@ -31,7 +31,8 @@ public class ThreadsTokenRefreshService(
             {
                 await CheckAndRefreshAsync(threshold, stoppingToken);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            // Only a fired stoppingToken means shutdown; see SocialMediaPollingService.
+            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
             {
                 logger.LogError(ex, "Error during Threads token refresh check");
             }

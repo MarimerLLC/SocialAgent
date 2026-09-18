@@ -28,6 +28,13 @@ adheres to [Semantic Versioning](https://semver.org/).
 - **`/health/ready` reported healthy with the database down.** `AddHealthChecks()` had no checks
   registered. Readiness now runs `AddDbContextCheck`; liveness stays a pure process check so a
   database blip does not restart the pod.
+- **A transient network error restarted the whole pod.** A request timeout surfaces as
+  `TaskCanceledException`, which is an `OperationCanceledException`, and the background services
+  filtered their handlers on that type — so a blip talking to Mastodon escaped `ExecuteAsync`
+  and the host's default `StopHost` behaviour terminated the process. The running 1.3.4 pod had
+  60 restarts from exactly this. The handlers now key off the stopping token instead, so real
+  shutdown still propagates while timeouts are logged and polling continues. The same filter is
+  corrected in the providers, where it defeated their graceful-degradation paths.
 - **Polling silently dropped data.** Each provider fetched one fixed page and filtered `since`
   client-side, so anything beyond that page in a poll interval was lost. All three providers now
   page (Mastodon `max_id`, Bluesky `cursor`, Threads `after`) until they pass the cutoff.
@@ -83,6 +90,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   no dry-run against the live database.
 - `AspNetCore.HealthChecks.NpgSql` was removed from `Directory.Packages.props`; it was never
   referenced by any project.
+- The Threads ConfigMap/Secret references in `deploy/k8s/deployment.yaml` are now `optional: true`.
+  Threads is disabled and those keys are absent from the deployed ConfigMap and Secret; without
+  this the pod would land in `CreateContainerConfigError`.
 
 ## [1.4.0] - 2026-05-04
 

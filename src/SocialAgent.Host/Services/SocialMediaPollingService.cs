@@ -23,12 +23,23 @@ public class SocialMediaPollingService(
             {
                 await PollAllProvidersAsync(stoppingToken);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            // Only a fired stoppingToken means shutdown. An HttpClient timeout surfaces as
+            // TaskCanceledException, which is an OperationCanceledException — filtering on the
+            // type alone let a transient network blip escape ExecuteAsync and, via the host's
+            // default StopHost behaviour, terminate the whole process.
+            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
             {
                 logger.LogError(ex, "Error during social media polling cycle");
             }
 
-            await Task.Delay(TimeSpan.FromMinutes(intervalMinutes), stoppingToken);
+            try
+            {
+                await Task.Delay(TimeSpan.FromMinutes(intervalMinutes), stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
         }
     }
 
@@ -44,7 +55,8 @@ public class SocialMediaPollingService(
             {
                 await PollProviderAsync(provider, repository, ct);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            // As above: a timeout against one provider must not abort the cycle or the host.
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogError(ex, "Error polling provider {ProviderId}", provider.ProviderId);
             }

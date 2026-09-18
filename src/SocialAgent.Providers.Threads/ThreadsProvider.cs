@@ -42,7 +42,7 @@ public class ThreadsProvider(
             var user = await GetAsync<ThreadsUser>("/v1.0/me?fields=id", ct);
             return user is not null && !string.IsNullOrEmpty(user.Id);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "Threads connection validation failed");
             return false;
@@ -66,7 +66,7 @@ public class ThreadsProvider(
                     ?? insights?.Data?.FirstOrDefault()?.Values?.FirstOrDefault()?.Value
                     ?? 0;
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogWarning(ex, "Failed to fetch Threads follower count (insights scope may be missing)");
             }
@@ -105,7 +105,7 @@ public class ThreadsProvider(
                         ?? insights?.Data?.FirstOrDefault()?.TotalValue?.Value
                         ?? 0;
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (!ct.IsCancellationRequested)
                 {
                     logger.LogDebug(ex, "Failed to fetch Threads insights for thread {Id}", item.Id);
                 }
@@ -159,7 +159,7 @@ public class ThreadsProvider(
             logger.LogInformation("Threads access token refreshed; new expiry {Expiry:o}", expiresAt);
             return (refreshed.AccessToken, expiresAt);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogError(ex, "Failed to refresh Threads access token");
             return null;
@@ -212,7 +212,7 @@ public class ThreadsProvider(
         {
             return await GetPagedAsync(baseUrl, since, ct);
         }
-        catch (Exception ex) when (ex is not OperationCanceledException)
+        catch (Exception ex) when (!ct.IsCancellationRequested)
         {
             logger.LogWarning(ex, "Failed to fetch Threads list at {Path} (scope may be missing)", PathOf(baseUrl));
             return [];
