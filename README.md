@@ -39,8 +39,11 @@ SocialAgent monitors your social media accounts across multiple platforms, colle
 # Build
 dotnet build SocialAgent.slnx
 
-# Run tests
+# Run tests (provider integration tests self-skip without credentials)
 dotnet test SocialAgent.slnx
+
+# Unit tests only, as CI runs them
+dotnet test SocialAgent.slnx --filter "TestCategory!=Integration"
 
 # Run the agent (development mode — no auth required)
 cd src/SocialAgent.Host
@@ -56,10 +59,13 @@ The agent speaks **A2A protocol version 1.0**.
 - `GET /.well-known/agent-card.json` — Agent card (A2A 1.0 discovery)
 - `POST /a2a` — JSON-RPC binding (`SendMessage`, `GetTask`, etc.)
 - `POST /a2a/message:send`, `GET /a2a/tasks/{id}`, etc. — HTTP+JSON binding
-- `GET /health/ready` — Readiness probe
-- `GET /health/live` — Liveness probe
+- `GET /health/ready` — Readiness probe (checks database connectivity)
+- `GET /health/live` — Liveness probe (process only, so a database blip does not restart the pod)
 
 ### Configuration
+
+Outside the `Development` environment, `Authentication:ApiKey` is required — the agent refuses to
+start without it rather than running and rejecting every request.
 
 Configure providers via `appsettings.json`, environment variables, or user secrets:
 
@@ -89,6 +95,19 @@ For Threads-specific setup (OAuth scopes, Meta App Review,
 - **Development:** SQLite (default, zero config)
 - **Production:** PostgreSQL (set `SocialAgent:DatabaseProvider` to `PostgreSQL` and provide `ConnectionStrings:SocialAgent`)
 
+Schema is managed by EF Core migrations, applied automatically at startup. Because EF cannot
+resolve two providers' migrations from one assembly, each dialect has its own project — add every
+migration to both:
+
+```bash
+dotnet ef migrations add <Name> --project src/SocialAgent.Data.Migrations.Sqlite --context SocialAgentDbContext
+dotnet ef migrations add <Name> --project src/SocialAgent.Data.Migrations.Npgsql --context SocialAgentDbContext
+```
+
+Databases created before 1.5.0 were provisioned by `EnsureCreated` and have no migrations history.
+The first 1.5.0 start adopts them by recording the baseline migration as already applied; no data is
+modified. **Back up before the first production rollout.**
+
 ## Kubernetes Deployment
 
 ```bash
@@ -100,7 +119,9 @@ kubectl apply -f deploy/k8s/deployment.yaml
 kubectl apply -f deploy/k8s/service.yaml
 ```
 
-The agent runs as a continuous Deployment (not CronJob) for A2A responsiveness.
+The agent runs as a continuous Deployment (not CronJob) for A2A responsiveness. The pod runs as a
+non-root user with a read-only root filesystem, dropped capabilities and the `RuntimeDefault`
+seccomp profile.
 
 ## Architecture
 

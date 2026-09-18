@@ -1,5 +1,8 @@
+using System.Net;
+using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using SocialAgent.TestSupport;
 
 namespace SocialAgent.Providers.Threads.Tests;
 
@@ -69,25 +72,23 @@ public class ThreadsProviderIntegrationTests
 {
     private static ThreadsProvider CreateProvider()
     {
-        var accessToken = Environment.GetEnvironmentVariable("THREADS_ACCESS_TOKEN")
-            ?? throw new InvalidOperationException(
-                "Set THREADS_ACCESS_TOKEN environment variable to run integration tests");
+        var accessToken = Environment.GetEnvironmentVariable("THREADS_ACCESS_TOKEN");
+        if (string.IsNullOrWhiteSpace(accessToken))
+        {
+            Assert.Inconclusive("Set THREADS_ACCESS_TOKEN to run Threads integration tests.");
+        }
 
         var options = Options.Create(new ThreadsOptions
         {
             Enabled = true,
             BaseUrl = "https://graph.threads.net",
-            AccessToken = accessToken
+            AccessToken = accessToken!
         });
 
-        var tokenStore = new ThreadsTokenStore(options);
-
-        var httpClient = new HttpClient { BaseAddress = new Uri(options.Value.BaseUrl) };
-
         return new ThreadsProvider(
-            httpClient,
+            new LiveHttpClientFactory(options.Value.BaseUrl),
             options,
-            tokenStore,
+            new ThreadsTokenStore(options),
             NullLogger<ThreadsProvider>.Instance);
     }
 
@@ -140,5 +141,147 @@ public class ThreadsProviderIntegrationTests
 
         Assert.IsNotNull(notifications);
         Console.WriteLine($"Retrieved {notifications.Count} notifications");
+    }
+}
+
+[TestClass]
+public class ThreadsProviderHttpTests
+{
+    private const string UserJson = """
+        {"id":"u1","username":"me","name":"Me","threads_biography":"bio"}
+        """;
+
+    private static (ThreadsProvider Provider, ThreadsTokenStore Store) CreateProvider(StubHttpMessageHandler handler)
+    {
+        var options = Options.Create(new ThreadsOptions
+        {
+            Enabled = true,
+            BaseUrl = "https://graph.threads.test",
+            AccessToken = "token-1"
+        });
+        var store = new ThreadsTokenStore(options);
+        var provider = new ThreadsProvider(
+            StubHttpClientFactory.For(handler, "https://graph.threads.test"),
+            options,
+            store,
+            NullLogger<ThreadsProvider>.Instance);
+        return (provider, store);
+    }
+
+    [TestMethod]
+    public async Task GetProfile_SendsTokenAsBearerHeader_NotInQueryString()
+    {
+        var handler = StubHttpMessageHandler.AlwaysJson(UserJson);
+        var (provider, _) = CreateProvider(handler);
+
+        await provider.GetProfileAsync();
+
+        var request = handler.Requests[0];
+        Assert.AreEqual("Bearer", request.AuthScheme);
+        Assert.AreEqual("token-1", request.AuthParameter);
+        Assert.IsFalse(request.PathAndQuery.Contains("access_token="),
+            "the access token must not appear in the URL, which reaches traces and logs");
+    }
+
+    [TestMethod]
+    public async Task RefreshToken_UsesAuthorizationHeader_WhenAccepted()
+    {
+        var handler = StubHttpMessageHandler.AlwaysJson(
+            """{"access_token":"token-2","token_type":"bearer","expires_in":5184000}""");
+        var (provider, store) = CreateProvider(handler);
+
+        var refreshed = await provider.RefreshTokenAsync();
+
+        Assert.IsNotNull(refreshed);
+        Assert.AreEqual("token-2", refreshed.Value.Token);
+        Assert.AreEqual("token-2", store.Current.Token);
+        Assert.AreEqual(1, handler.Requests.Count);
+        Assert.AreEqual("token-1", handler.Requests[0].AuthParameter);
+        Assert.IsFalse(handler.Requests[0].PathAndQuery.Contains("access_token="),
+            "the header form must not also put the token in the URL");
+    }
+
+    [TestMethod]
+    public async Task RefreshToken_FallsBackToQueryParameter_WhenHeaderRejected()
+    {
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Status(HttpStatusCode.BadRequest),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK,
+                """{"access_token":"token-2","token_type":"bearer","expires_in":5184000}"""));
+        var (provider, store) = CreateProvider(handler);
+
+        var refreshed = await provider.RefreshTokenAsync();
+
+        Assert.IsNotNull(refreshed);
+        Assert.AreEqual("token-2", store.Current.Token);
+        Assert.AreEqual(2, handler.Requests.Count);
+        Assert.IsTrue(handler.Requests[1].PathAndQuery.Contains("access_token=token-1"),
+            "the documented query-parameter form is the fallback");
+    }
+
+    [TestMethod]
+    public async Task RefreshToken_ReturnsNull_AndKeepsToken_WhenBothFormsFail()
+    {
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Status(HttpStatusCode.BadRequest),
+            () => StubHttpMessageHandler.Status(HttpStatusCode.BadRequest));
+        var (provider, store) = CreateProvider(handler);
+
+        var refreshed = await provider.RefreshTokenAsync();
+
+        Assert.IsNull(refreshed);
+        Assert.AreEqual("token-1", store.Current.Token, "a failed refresh must not clobber the working token");
+    }
+
+    [TestMethod]
+    public async Task GetRecentPosts_FollowsAfterCursor()
+    {
+        var call = 0;
+        var handler = new StubHttpMessageHandler((_, _) =>
+        {
+            var body = call++ == 0
+                ? ThreadsPage(25, after: "cursor-1")
+                : ThreadsPage(3, after: null);
+            return StubHttpMessageHandler.Json(HttpStatusCode.OK, body);
+        });
+        var (provider, _) = CreateProvider(handler);
+
+        var posts = await provider.GetRecentPostsAsync();
+
+        Assert.AreEqual(28, posts.Count);
+        Assert.IsTrue(handler.Requests[1].PathAndQuery.Contains("after=cursor-1"),
+            handler.Requests[1].PathAndQuery);
+    }
+
+    [TestMethod]
+    public async Task GetNotifications_Tolerates_MissingScopes()
+    {
+        var handler = new StubHttpMessageHandler((_, _) =>
+            StubHttpMessageHandler.Status(HttpStatusCode.Forbidden));
+        var (provider, _) = CreateProvider(handler);
+
+        var notifications = await provider.GetNotificationsAsync();
+
+        Assert.AreEqual(0, notifications.Count, "a missing scope should degrade, not throw");
+    }
+
+    private static string ThreadsPage(int count, string? after)
+    {
+        var data = Enumerable.Range(0, count).Select(i => new
+        {
+            id = $"t{i}",
+            text = $"post {i}",
+            timestamp = DateTimeOffset.UtcNow,
+            permalink = $"https://threads.test/{i}",
+            username = "me",
+            replies_count = 1,
+            reposts_count = 2,
+            quotes_count = 3
+        });
+        return JsonSerializer.Serialize(new
+        {
+            data,
+            paging = new { cursors = new { after } }
+        });
     }
 }

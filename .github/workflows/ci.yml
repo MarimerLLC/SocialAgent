@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore SocialAgent.slnx
+
+      - name: Build
+        run: dotnet build SocialAgent.slnx --no-restore --configuration Release
+
+      # Integration tests talk to live provider APIs; they self-skip without credentials, but
+      # excluding them keeps CI off the network entirely.
+      - name: Test
+        run: dotnet test SocialAgent.slnx --no-build --configuration Release --filter "TestCategory!=Integration"
+
+  docker:
+    name: Docker Image Builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Builds the image without pushing, so a stale Dockerfile (e.g. a project
+      # missing from the restore layer) fails CI instead of release day.
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: src/SocialAgent.Host/Dockerfile
+          push: false

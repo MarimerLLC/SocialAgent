@@ -7,21 +7,32 @@ public class SocialDataRepository(SocialAgentDbContext db) : ISocialDataReposito
 {
     public async Task UpsertPostsAsync(IEnumerable<SocialPost> posts, CancellationToken ct = default)
     {
-        foreach (var post in posts)
+        var incoming = posts.ToList();
+        if (incoming.Count == 0)
         {
-            var existing = await db.Posts
-                .FirstOrDefaultAsync(p => p.ProviderId == post.ProviderId && p.PlatformPostId == post.PlatformPostId, ct);
+            return;
+        }
 
-            if (existing is null)
+        // One lookup for the whole batch instead of a SELECT per post.
+        var providerIds = incoming.Select(p => p.ProviderId).Distinct().ToList();
+        var platformIds = incoming.Select(p => p.PlatformPostId).Distinct().ToList();
+        var existing = await db.Posts
+            .Where(p => providerIds.Contains(p.ProviderId) && platformIds.Contains(p.PlatformPostId))
+            .ToDictionaryAsync(p => (p.ProviderId, p.PlatformPostId), ct);
+
+        var now = DateTimeOffset.UtcNow;
+        foreach (var post in incoming)
+        {
+            if (existing.TryGetValue((post.ProviderId, post.PlatformPostId), out var match))
             {
-                db.Posts.Add(post);
+                match.LikeCount = post.LikeCount;
+                match.RepostCount = post.RepostCount;
+                match.ReplyCount = post.ReplyCount;
+                match.LastUpdated = now;
             }
             else
             {
-                existing.LikeCount = post.LikeCount;
-                existing.RepostCount = post.RepostCount;
-                existing.ReplyCount = post.ReplyCount;
-                existing.LastUpdated = DateTimeOffset.UtcNow;
+                db.Posts.Add(post);
             }
         }
         await db.SaveChangesAsync(ct);
@@ -54,18 +65,28 @@ public class SocialDataRepository(SocialAgentDbContext db) : ISocialDataReposito
 
     public async Task UpsertNotificationsAsync(IEnumerable<SocialNotification> notifications, CancellationToken ct = default)
     {
-        foreach (var notification in notifications)
+        var incoming = notifications.ToList();
+        if (incoming.Count == 0)
         {
-            var existing = await db.Notifications
-                .FirstOrDefaultAsync(n => n.ProviderId == notification.ProviderId && n.PlatformNotificationId == notification.PlatformNotificationId, ct);
+            return;
+        }
 
-            if (existing is null)
+        // One lookup for the whole batch instead of a SELECT per notification.
+        var providerIds = incoming.Select(n => n.ProviderId).Distinct().ToList();
+        var platformIds = incoming.Select(n => n.PlatformNotificationId).Distinct().ToList();
+        var existing = await db.Notifications
+            .Where(n => providerIds.Contains(n.ProviderId) && platformIds.Contains(n.PlatformNotificationId))
+            .ToDictionaryAsync(n => (n.ProviderId, n.PlatformNotificationId), ct);
+
+        foreach (var notification in incoming)
+        {
+            if (existing.TryGetValue((notification.ProviderId, notification.PlatformNotificationId), out var match))
             {
-                db.Notifications.Add(notification);
+                match.IsRead = notification.IsRead;
             }
             else
             {
-                existing.IsRead = notification.IsRead;
+                db.Notifications.Add(notification);
             }
         }
         await db.SaveChangesAsync(ct);
@@ -90,6 +111,52 @@ public class SocialDataRepository(SocialAgentDbContext db) : ISocialDataReposito
         var query = db.Notifications.Where(n => !n.IsRead);
         if (providerId is not null) query = query.Where(n => n.ProviderId == providerId);
         return await query.OrderByDescending(n => n.CreatedAt).ToListAsync(ct);
+    }
+
+    public async Task<PostEngagementTotals> GetPostEngagementTotalsAsync(
+        string? providerId = null, DateTimeOffset? since = null, CancellationToken ct = default)
+    {
+        var query = db.Posts.Where(p => p.IsOwnPost);
+        if (providerId is not null) query = query.Where(p => p.ProviderId == providerId);
+        if (since is not null) query = query.Where(p => p.CreatedAt >= since);
+
+        // Aggregated in SQL; the whole period never lands in memory.
+        var totals = await query
+            .GroupBy(_ => 1)
+            .Select(g => new PostEngagementTotals(
+                g.Count(),
+                g.Sum(p => p.LikeCount),
+                g.Sum(p => p.RepostCount),
+                g.Sum(p => p.ReplyCount)))
+            .FirstOrDefaultAsync(ct);
+
+        return totals;
+    }
+
+    public async Task<IReadOnlyDictionary<string, int>> GetNotificationCountsByTypeAsync(
+        string? providerId = null, DateTimeOffset? since = null, CancellationToken ct = default)
+    {
+        var query = db.Notifications.AsQueryable();
+        if (providerId is not null) query = query.Where(n => n.ProviderId == providerId);
+        if (since is not null) query = query.Where(n => n.CreatedAt >= since);
+
+        return await query
+            .GroupBy(n => n.Type)
+            .Select(g => new { Type = g.Key, Count = g.Count() })
+            .ToDictionaryAsync(x => x.Type, x => x.Count, ct);
+    }
+
+    public async Task<IReadOnlyList<EngagerTally>> GetEngagerTalliesAsync(
+        string? providerId = null, DateTimeOffset? since = null, CancellationToken ct = default)
+    {
+        var query = db.Notifications.AsQueryable();
+        if (providerId is not null) query = query.Where(n => n.ProviderId == providerId);
+        if (since is not null) query = query.Where(n => n.CreatedAt >= since);
+
+        return await query
+            .GroupBy(n => new { n.FromHandle, n.Type })
+            .Select(g => new EngagerTally(g.Key.FromHandle, g.Key.Type, g.Count()))
+            .ToListAsync(ct);
     }
 
     public async Task UpsertProfileAsync(SocialProfile profile, CancellationToken ct = default)

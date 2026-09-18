@@ -1,10 +1,13 @@
+using System.Net;
+using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using SocialAgent.TestSupport;
 
 namespace SocialAgent.Providers.Bluesky.Tests;
 
 [TestClass]
-public class BlueskyProviderTests
+public class BlueskyOptionsTests
 {
     [TestMethod]
     public void BlueskyOptions_DefaultServiceUrl_IsSet()
@@ -19,28 +22,223 @@ public class BlueskyProviderTests
 }
 
 [TestClass]
+public class BlueskyProviderTests
+{
+    private const string SessionJson = """
+        {"accessJwt":"access-1","refreshJwt":"refresh-1","did":"did:plc:abc","handle":"me.bsky.social"}
+        """;
+
+    private const string RefreshedSessionJson = """
+        {"accessJwt":"access-2","refreshJwt":"refresh-2","did":"did:plc:abc","handle":"me.bsky.social"}
+        """;
+
+    private const string ProfileJson = """
+        {"did":"did:plc:abc","handle":"me.bsky.social","displayName":"Me","followersCount":7,"followsCount":3,"postsCount":11}
+        """;
+
+    private static BlueskyProvider CreateProvider(StubHttpMessageHandler handler)
+    {
+        var options = Options.Create(new BlueskyOptions
+        {
+            Enabled = true,
+            ServiceUrl = "https://bsky.test",
+            Handle = "me.bsky.social",
+            AppPassword = "app-password"
+        });
+
+        return new BlueskyProvider(
+            StubHttpClientFactory.For(handler, "https://bsky.test"),
+            options,
+            NullLogger<BlueskyProvider>.Instance);
+    }
+
+    [TestMethod]
+    public async Task GetProfile_LogsInAndSendsAccessJwt()
+    {
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, SessionJson),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, ProfileJson));
+        var provider = CreateProvider(handler);
+
+        var profile = await provider.GetProfileAsync();
+
+        Assert.AreEqual("me.bsky.social", profile.Handle);
+        Assert.AreEqual(7, profile.FollowerCount);
+
+        var login = handler.Requests[0];
+        Assert.IsTrue(login.PathAndQuery.Contains("createSession"), login.PathAndQuery);
+
+        var profileCall = handler.Requests[1];
+        Assert.AreEqual("Bearer", profileCall.AuthScheme);
+        Assert.AreEqual("access-1", profileCall.AuthParameter);
+        Assert.IsTrue(profileCall.PathAndQuery.Contains("did%3Aplc%3Aabc"), profileCall.PathAndQuery);
+    }
+
+    [TestMethod]
+    public async Task ExpiredAccessJwt_IsRefreshedWithRefreshJwt_AndRequestRetried()
+    {
+        // login -> 401 -> refreshSession -> retry
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, SessionJson),
+            () => StubHttpMessageHandler.Status(HttpStatusCode.Unauthorized),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, RefreshedSessionJson),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, ProfileJson));
+        var provider = CreateProvider(handler);
+
+        var profile = await provider.GetProfileAsync();
+
+        Assert.AreEqual("me.bsky.social", profile.Handle);
+
+        var refresh = handler.Requests[2];
+        Assert.IsTrue(refresh.PathAndQuery.Contains("refreshSession"), refresh.PathAndQuery);
+        Assert.AreEqual("refresh-1", refresh.AuthParameter, "refresh must present the refresh JWT");
+
+        var retry = handler.Requests[3];
+        Assert.AreEqual("access-2", retry.AuthParameter, "retry must use the newly issued access JWT");
+    }
+
+    [TestMethod]
+    public async Task FailedRefresh_FallsBackToFullLogin()
+    {
+        // login -> 401 -> refreshSession fails -> createSession -> retry
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, SessionJson),
+            () => StubHttpMessageHandler.Status(HttpStatusCode.Unauthorized),
+            () => StubHttpMessageHandler.Status(HttpStatusCode.BadRequest),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, RefreshedSessionJson),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, ProfileJson));
+        var provider = CreateProvider(handler);
+
+        var profile = await provider.GetProfileAsync();
+
+        Assert.AreEqual("me.bsky.social", profile.Handle);
+        Assert.IsTrue(handler.Requests[3].PathAndQuery.Contains("createSession"),
+            "a rejected refresh should fall back to a full login");
+        Assert.AreEqual("access-2", handler.Requests[4].AuthParameter);
+    }
+
+    [TestMethod]
+    public async Task SessionIsReusedAcrossCalls()
+    {
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, SessionJson),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, ProfileJson));
+        var provider = CreateProvider(handler);
+
+        await provider.GetProfileAsync();
+        await provider.GetProfileAsync();
+
+        var logins = handler.Requests.Count(r => r.PathAndQuery.Contains("createSession"));
+        Assert.AreEqual(1, logins, "a cached session should not re-authenticate on every call");
+    }
+
+    [TestMethod]
+    public async Task GetRecentPosts_FollowsCursor_UntilSinceCutoff()
+    {
+        var recent = DateTimeOffset.UtcNow;
+        var old = DateTimeOffset.UtcNow.AddDays(-5);
+        var page1 = BuildFeed(50, recent, cursor: "cursor-1");
+        var page2 = BuildFeed(1, old, cursor: null);
+
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, SessionJson),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, page1),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, page2));
+        var provider = CreateProvider(handler);
+
+        var posts = await provider.GetRecentPostsAsync(since: DateTimeOffset.UtcNow.AddDays(-1));
+
+        Assert.AreEqual(50, posts.Count, "only posts newer than the cutoff should be returned");
+        Assert.IsTrue(handler.Requests[2].PathAndQuery.Contains("cursor=cursor-1"),
+            handler.Requests[2].PathAndQuery);
+    }
+
+    [TestMethod]
+    public async Task GetRecentPosts_WithoutSince_FetchesOnePage()
+    {
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, SessionJson),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, BuildFeed(50, DateTimeOffset.UtcNow, "cursor-1")));
+        var provider = CreateProvider(handler);
+
+        var posts = await provider.GetRecentPostsAsync();
+
+        Assert.AreEqual(50, posts.Count);
+        Assert.AreEqual(2, handler.Requests.Count, "a first-ever poll should not page indefinitely");
+    }
+
+    [TestMethod]
+    public async Task MapsRecordCreatedAt_NotIndexedAt()
+    {
+        var authored = new DateTimeOffset(2026, 1, 2, 3, 4, 5, TimeSpan.Zero);
+        var indexed = authored.AddHours(6);
+        var feed = FeedJson(
+            [BuildPost("xyz", "cid1", text: "hello", createdAt: authored, indexedAt: indexed)],
+            cursor: null);
+
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, SessionJson),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, feed));
+        var provider = CreateProvider(handler);
+
+        var posts = await provider.GetRecentPostsAsync();
+
+        Assert.AreEqual(1, posts.Count);
+        Assert.AreEqual(authored, posts[0].CreatedAt);
+        Assert.AreEqual("https://bsky.app/profile/me.bsky.social/post/xyz", posts[0].Url);
+    }
+
+    private static string BuildFeed(int count, DateTimeOffset indexedAt, string? cursor)
+    {
+        var posts = Enumerable.Range(0, count)
+            .Select(i => BuildPost($"p{i}", $"cid{i}", $"post {i}", indexedAt, indexedAt))
+            .ToArray();
+        return FeedJson(posts, cursor);
+    }
+
+    private static object BuildPost(
+        string rkey, string cid, string text, DateTimeOffset createdAt, DateTimeOffset indexedAt) => new
+        {
+            post = new
+            {
+                uri = $"at://did:plc:abc/app.bsky.feed.post/{rkey}",
+                cid,
+                author = new { did = "did:plc:abc", handle = "me.bsky.social" },
+                record = new { text, createdAt },
+                likeCount = 1,
+                repostCount = 2,
+                replyCount = 3,
+                indexedAt
+            }
+        };
+
+    private static string FeedJson(object[] posts, string? cursor) =>
+        JsonSerializer.Serialize(new { feed = posts, cursor });
+}
+
+[TestClass]
 [TestCategory("Integration")]
 public class BlueskyProviderIntegrationTests
 {
     private static BlueskyProvider CreateProvider()
     {
-        var handle = Environment.GetEnvironmentVariable("BLUESKY_HANDLE")
-            ?? throw new InvalidOperationException(
-                "Set BLUESKY_HANDLE environment variable to run integration tests");
-        var appPassword = Environment.GetEnvironmentVariable("BLUESKY_APP_PASSWORD")
-            ?? throw new InvalidOperationException(
-                "Set BLUESKY_APP_PASSWORD environment variable to run integration tests");
+        var handle = Environment.GetEnvironmentVariable("BLUESKY_HANDLE");
+        var appPassword = Environment.GetEnvironmentVariable("BLUESKY_APP_PASSWORD");
+        if (string.IsNullOrWhiteSpace(handle) || string.IsNullOrWhiteSpace(appPassword))
+        {
+            Assert.Inconclusive("Set BLUESKY_HANDLE and BLUESKY_APP_PASSWORD to run Bluesky integration tests.");
+        }
 
         var options = Options.Create(new BlueskyOptions
         {
             Enabled = true,
             ServiceUrl = "https://bsky.social",
-            Handle = handle,
-            AppPassword = appPassword
+            Handle = handle!,
+            AppPassword = appPassword!
         });
 
         return new BlueskyProvider(
-            new HttpClient(),
+            new LiveHttpClientFactory(options.Value.ServiceUrl),
             options,
             NullLogger<BlueskyProvider>.Instance);
     }
@@ -65,10 +263,6 @@ public class BlueskyProviderIntegrationTests
         Assert.IsNotNull(profile);
         Assert.AreEqual("bluesky", profile.ProviderId);
         Assert.IsFalse(string.IsNullOrEmpty(profile.Handle), "Handle should not be empty");
-        Console.WriteLine($"Handle: {profile.Handle}");
-        Console.WriteLine($"Display Name: {profile.DisplayName}");
-        Console.WriteLine($"Followers: {profile.FollowerCount}");
-        Console.WriteLine($"Posts: {profile.PostCount}");
     }
 
     [TestMethod]
@@ -79,11 +273,6 @@ public class BlueskyProviderIntegrationTests
         var posts = await provider.GetRecentPostsAsync();
 
         Assert.IsNotNull(posts);
-        Console.WriteLine($"Retrieved {posts.Count} posts");
-        foreach (var post in posts.Take(3))
-        {
-            Console.WriteLine($"  [{post.CreatedAt:g}] {post.Content?[..Math.Min(80, post.Content.Length)]}...");
-        }
     }
 
     [TestMethod]
@@ -94,10 +283,5 @@ public class BlueskyProviderIntegrationTests
         var notifications = await provider.GetNotificationsAsync();
 
         Assert.IsNotNull(notifications);
-        Console.WriteLine($"Retrieved {notifications.Count} notifications");
-        foreach (var n in notifications.Take(5))
-        {
-            Console.WriteLine($"  [{n.CreatedAt:g}] {n.Type} from {n.FromHandle}");
-        }
     }
 }

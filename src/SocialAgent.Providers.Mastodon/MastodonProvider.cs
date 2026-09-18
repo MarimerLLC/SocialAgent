@@ -6,14 +6,25 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SocialAgent.Core.Models;
 using SocialAgent.Core.Providers;
+using SocialAgent.Core.Text;
 
 namespace SocialAgent.Providers.Mastodon;
 
 public class MastodonProvider(
-    HttpClient httpClient,
+    IHttpClientFactory httpClientFactory,
     IOptions<MastodonOptions> options,
     ILogger<MastodonProvider> logger) : ISocialMediaProvider
 {
+    /// <summary>Named <see cref="HttpClient"/> registered by <c>AddMastodonProvider</c>.</summary>
+    public const string HttpClientName = "mastodon";
+
+    // Mastodon caps `limit` at 40 for both timelines and notifications.
+    private const int PageSize = 40;
+
+    // Bounds a single poll. Ten pages covers a five-minute interval with plenty of headroom while
+    // still guaranteeing the loop terminates if a server keeps returning full pages.
+    private const int MaxPages = 10;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -22,6 +33,11 @@ public class MastodonProvider(
 
     private readonly MastodonOptions _options = options.Value;
 
+    // The account id never changes for a given token, so it is resolved once instead of costing
+    // a verify_credentials round trip on every poll.
+    private readonly SemaphoreSlim _accountLock = new(1, 1);
+    private MastodonAccount? _account;
+
     public string ProviderId => "mastodon";
     public string ProviderName => "Mastodon";
 
@@ -29,11 +45,12 @@ public class MastodonProvider(
     {
         try
         {
-            ConfigureClient();
-            var response = await httpClient.GetAsync("/api/v1/accounts/verify_credentials", ct);
+            var client = httpClientFactory.CreateClient(HttpClientName);
+            using var request = CreateRequest(HttpMethod.Get, "/api/v1/accounts/verify_credentials");
+            using var response = await client.SendAsync(request, ct);
             return response.IsSuccessStatusCode;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "Mastodon connection validation failed");
             return false;
@@ -42,17 +59,17 @@ public class MastodonProvider(
 
     public async Task<SocialProfile> GetProfileAsync(CancellationToken ct = default)
     {
-        ConfigureClient();
-        var account = await httpClient.GetFromJsonAsync<MastodonAccount>(
-            "/api/v1/accounts/verify_credentials", JsonOptions, ct)
+        // Deliberately not served from the cache: follower and post counts are the point of this call.
+        var account = await GetAsync<MastodonAccount>("/api/v1/accounts/verify_credentials", ct)
             ?? throw new InvalidOperationException("Failed to get Mastodon account");
+        Volatile.Write(ref _account, account);
 
         return new SocialProfile
         {
             ProviderId = ProviderId,
             Handle = account.Acct,
             DisplayName = account.DisplayName,
-            Bio = account.Note,
+            Bio = HtmlText.ToPlainText(account.Note),
             AvatarUrl = account.Avatar,
             FollowerCount = account.FollowersCount,
             FollowingCount = account.FollowingCount,
@@ -62,51 +79,143 @@ public class MastodonProvider(
 
     public async Task<IReadOnlyList<SocialPost>> GetRecentPostsAsync(DateTimeOffset? since = null, CancellationToken ct = default)
     {
-        ConfigureClient();
-        var account = await httpClient.GetFromJsonAsync<MastodonAccount>(
-            "/api/v1/accounts/verify_credentials", JsonOptions, ct)
-            ?? throw new InvalidOperationException("Failed to get Mastodon account");
+        var account = await GetAccountAsync(ct);
+        var posts = new List<SocialPost>();
+        string? maxId = null;
 
-        var url = $"/api/v1/accounts/{account.Id}/statuses?limit=40";
-        var statuses = await httpClient.GetFromJsonAsync<List<MastodonStatus>>(url, JsonOptions, ct) ?? [];
+        for (var page = 0; page < MaxPages; page++)
+        {
+            var url = $"/api/v1/accounts/{account.Id}/statuses?limit={PageSize}";
+            if (maxId is not null)
+            {
+                url += $"&max_id={Uri.EscapeDataString(maxId)}";
+            }
 
-        return statuses
-            .Where(s => since is null || s.CreatedAt >= since)
-            .Select(s => MapToSocialPost(s, account.Acct, isOwn: true))
-            .ToList();
+            var statuses = await GetAsync<List<MastodonStatus>>(url, ct) ?? [];
+            if (statuses.Count == 0)
+            {
+                break;
+            }
+
+            var reachedCutoff = false;
+            foreach (var status in statuses)
+            {
+                if (since is not null && status.CreatedAt < since)
+                {
+                    reachedCutoff = true;
+                    continue;
+                }
+                posts.Add(MapToSocialPost(status, account.Acct, isOwn: true));
+            }
+
+            // No `since` means this is a first-ever poll; one page is backfill enough.
+            if (since is null || reachedCutoff || statuses.Count < PageSize)
+            {
+                break;
+            }
+            maxId = statuses[^1].Id;
+        }
+
+        return posts;
     }
 
     public async Task<IReadOnlyList<SocialNotification>> GetNotificationsAsync(DateTimeOffset? since = null, CancellationToken ct = default)
     {
-        ConfigureClient();
-
         // Fetch the last-read marker to determine read state
         string? lastReadId = null;
         try
         {
-            var markers = await httpClient.GetFromJsonAsync<MastodonMarkersResponse>(
-                "/api/v1/markers?timeline[]=notifications", JsonOptions, ct);
+            var markers = await GetAsync<MastodonMarkersResponse>(
+                "/api/v1/markers?timeline[]=notifications", ct);
             lastReadId = markers?.Notifications?.LastReadId;
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "Failed to fetch Mastodon notification markers, all will be marked unread");
         }
 
-        var url = "/api/v1/notifications?limit=40";
-        var notifications = await httpClient.GetFromJsonAsync<List<MastodonNotification>>(url, JsonOptions, ct) ?? [];
+        var notifications = new List<SocialNotification>();
+        string? maxId = null;
 
-        return notifications
-            .Where(n => since is null || n.CreatedAt >= since)
-            .Select(n => MapToSocialNotification(n, lastReadId))
-            .ToList();
+        for (var page = 0; page < MaxPages; page++)
+        {
+            var url = $"/api/v1/notifications?limit={PageSize}";
+            if (maxId is not null)
+            {
+                url += $"&max_id={Uri.EscapeDataString(maxId)}";
+            }
+
+            var batch = await GetAsync<List<MastodonNotification>>(url, ct) ?? [];
+            if (batch.Count == 0)
+            {
+                break;
+            }
+
+            var reachedCutoff = false;
+            foreach (var notification in batch)
+            {
+                if (since is not null && notification.CreatedAt < since)
+                {
+                    reachedCutoff = true;
+                    continue;
+                }
+                notifications.Add(MapToSocialNotification(notification, lastReadId));
+            }
+
+            if (since is null || reachedCutoff || batch.Count < PageSize)
+            {
+                break;
+            }
+            maxId = batch[^1].Id;
+        }
+
+        return notifications;
     }
 
-    private void ConfigureClient()
+    private async Task<MastodonAccount> GetAccountAsync(CancellationToken ct)
     {
-        httpClient.BaseAddress ??= new Uri(_options.InstanceUrl);
-        httpClient.DefaultRequestHeaders.Authorization ??=
-            new AuthenticationHeaderValue("Bearer", _options.AccessToken);
+        var cached = Volatile.Read(ref _account);
+        if (cached is not null)
+        {
+            return cached;
+        }
+
+        await _accountLock.WaitAsync(ct);
+        try
+        {
+            cached = Volatile.Read(ref _account);
+            if (cached is not null)
+            {
+                return cached;
+            }
+
+            var account = await GetAsync<MastodonAccount>("/api/v1/accounts/verify_credentials", ct)
+                ?? throw new InvalidOperationException("Failed to get Mastodon account");
+            Volatile.Write(ref _account, account);
+            return account;
+        }
+        finally
+        {
+            _accountLock.Release();
+        }
+    }
+
+    private async Task<T?> GetAsync<T>(string url, CancellationToken ct)
+    {
+        var client = httpClientFactory.CreateClient(HttpClientName);
+        using var request = CreateRequest(HttpMethod.Get, url);
+        using var response = await client.SendAsync(request, ct);
+        response.EnsureSuccessStatusCode();
+        return await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct);
+    }
+
+    // Auth goes on the request, never on HttpClient.DefaultRequestHeaders: the handler is pooled and
+    // shared across the polling loop and A2A request threads, and HttpHeaders is not thread-safe.
+    private HttpRequestMessage CreateRequest(HttpMethod method, string url)
+    {
+        var request = new HttpRequestMessage(method, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.AccessToken);
+        return request;
     }
 
     private SocialPost MapToSocialPost(MastodonStatus status, string ownerAcct, bool isOwn)
@@ -117,7 +226,7 @@ public class MastodonProvider(
             ProviderId = ProviderId,
             PlatformPostId = status.Id,
             AuthorHandle = status.Account?.Acct ?? ownerAcct,
-            Content = status.Content,
+            Content = HtmlText.ToPlainText(status.Content),
             CreatedAt = status.CreatedAt,
             InReplyToId = status.InReplyToId,
             Url = status.Url,
@@ -145,7 +254,7 @@ public class MastodonProvider(
             FromHandle = notification.Account?.Acct ?? "unknown",
             CreatedAt = notification.CreatedAt,
             RelatedPostId = notification.Status?.Id is not null ? $"mastodon:{notification.Status.Id}" : null,
-            Content = notification.Status?.Content,
+            Content = HtmlText.ToPlainText(notification.Status?.Content),
             IsRead = isRead
         };
     }

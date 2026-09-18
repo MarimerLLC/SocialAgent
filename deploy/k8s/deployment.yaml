@@ -15,9 +15,19 @@ spec:
       labels:
         app: social-agent
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: social-agent
-          image: rockylhotka/socialagent:1.4.0
+          image: rockylhotka/socialagent:1.5.0
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8080
           env:
@@ -127,3 +137,11 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
+          # readOnlyRootFilesystem still needs somewhere writable for the temp files
+          # ASP.NET Core and Npgsql create.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

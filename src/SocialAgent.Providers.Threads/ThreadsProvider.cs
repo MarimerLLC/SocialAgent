@@ -1,3 +1,4 @@
+using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
@@ -10,11 +11,19 @@ using SocialAgent.Core.Providers;
 namespace SocialAgent.Providers.Threads;
 
 public class ThreadsProvider(
-    HttpClient httpClient,
+    IHttpClientFactory httpClientFactory,
     IOptions<ThreadsOptions> options,
     ThreadsTokenStore tokenStore,
     ILogger<ThreadsProvider> logger) : ISocialMediaProvider
 {
+    /// <summary>Named <see cref="HttpClient"/> registered by <c>AddThreadsProvider</c>.</summary>
+    public const string HttpClientName = "threads";
+
+    private const int PageSize = 25;
+
+    // Bounds a single poll while still guaranteeing the cursor loop terminates.
+    private const int MaxPages = 10;
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
@@ -33,7 +42,7 @@ public class ThreadsProvider(
             var user = await GetAsync<ThreadsUser>("/v1.0/me?fields=id", ct);
             return user is not null && !string.IsNullOrEmpty(user.Id);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogWarning(ex, "Threads connection validation failed");
             return false;
@@ -57,7 +66,7 @@ public class ThreadsProvider(
                     ?? insights?.Data?.FirstOrDefault()?.Values?.FirstOrDefault()?.Value
                     ?? 0;
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 logger.LogWarning(ex, "Failed to fetch Threads follower count (insights scope may be missing)");
             }
@@ -78,14 +87,8 @@ public class ThreadsProvider(
 
     public async Task<IReadOnlyList<SocialPost>> GetRecentPostsAsync(DateTimeOffset? since = null, CancellationToken ct = default)
     {
-        var url = "/v1.0/me/threads?fields=id,text,timestamp,permalink,replies_count,reposts_count,quotes_count,media_type,media_url,is_quote_post,username&limit=25";
-        if (since is not null)
-        {
-            url += $"&since={Uri.EscapeDataString(since.Value.ToUniversalTime().ToString("o"))}";
-        }
-
-        var response = await GetAsync<ThreadsListResponse<ThreadsConversationItem>>(url, ct);
-        var items = response?.Data ?? [];
+        const string fields = "id,text,timestamp,permalink,replies_count,reposts_count,quotes_count,media_type,media_url,is_quote_post,username";
+        var items = await GetPagedAsync($"/v1.0/me/threads?fields={fields}", since, ct);
 
         var posts = new List<SocialPost>(items.Count);
         foreach (var item in items)
@@ -93,6 +96,7 @@ public class ThreadsProvider(
             var likeCount = 0;
             if (_options.IncludePostInsights)
             {
+                // One extra call per post. Off by default precisely because of that cost.
                 try
                 {
                     var insights = await GetAsync<ThreadsInsightsResponse>(
@@ -101,7 +105,7 @@ public class ThreadsProvider(
                         ?? insights?.Data?.FirstOrDefault()?.TotalValue?.Value
                         ?? 0;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     logger.LogDebug(ex, "Failed to fetch Threads insights for thread {Id}", item.Id);
                 }
@@ -113,8 +117,9 @@ public class ThreadsProvider(
 
     public async Task<IReadOnlyList<SocialNotification>> GetNotificationsAsync(DateTimeOffset? since = null, CancellationToken ct = default)
     {
-        var mentions = await SafeGetListAsync(BuildNotificationUrl("/v1.0/me/mentions", since), ct);
-        var replies = await SafeGetListAsync(BuildNotificationUrl("/v1.0/me/replies", since), ct);
+        const string fields = "id,text,timestamp,permalink,username,replies_count,reposts_count,quotes_count";
+        var mentions = await SafeGetPagedAsync($"/v1.0/me/mentions?fields={fields}", since, ct);
+        var replies = await SafeGetPagedAsync($"/v1.0/me/replies?fields={fields}", since, ct);
 
         var seen = new HashSet<string>();
         var notifications = new List<SocialNotification>(mentions.Count + replies.Count);
@@ -133,66 +138,138 @@ public class ThreadsProvider(
         return notifications;
     }
 
+    /// <summary>
+    /// Exchanges the current long-lived token for a fresh one and stores it.
+    /// </summary>
     public async Task<(string Token, DateTimeOffset ExpiresAt)?> RefreshTokenAsync(CancellationToken ct = default)
     {
         var (currentToken, _) = tokenStore.Current;
-        var url = $"/refresh_access_token?grant_type=th_refresh_token&access_token={Uri.EscapeDataString(currentToken)}";
 
         try
         {
-            using var request = new HttpRequestMessage(HttpMethod.Get, url);
-            using var response = await httpClient.SendAsync(request, ct);
-            response.EnsureSuccessStatusCode();
-            var refreshed = await response.Content.ReadFromJsonAsync<ThreadsRefreshResponse>(JsonOptions, ct);
+            var refreshed = await RequestRefreshAsync(currentToken, ct);
             if (refreshed is null || string.IsNullOrEmpty(refreshed.AccessToken))
             {
                 logger.LogWarning("Threads token refresh returned an empty response");
                 return null;
             }
+
             var expiresAt = DateTimeOffset.UtcNow.AddSeconds(refreshed.ExpiresIn);
             tokenStore.Set(refreshed.AccessToken, expiresAt);
             logger.LogInformation("Threads access token refreshed; new expiry {Expiry:o}", expiresAt);
             return (refreshed.AccessToken, expiresAt);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             logger.LogError(ex, "Failed to refresh Threads access token");
             return null;
         }
     }
 
-    private static string BuildNotificationUrl(string path, DateTimeOffset? since)
+    /// <summary>
+    /// Refreshes via the Authorization header so the token never lands in a URL — request URIs
+    /// reach OpenTelemetry spans and exception messages. Meta documents this endpoint with the
+    /// token as a query parameter, so a rejected header form falls back to the documented shape
+    /// rather than silently failing a credential we only touch once every couple of months.
+    /// </summary>
+    private async Task<ThreadsRefreshResponse?> RequestRefreshAsync(string currentToken, CancellationToken ct)
     {
-        var url = $"{path}?fields=id,text,timestamp,permalink,username,replies_count,reposts_count,quotes_count&limit=25";
+        var client = httpClientFactory.CreateClient(HttpClientName);
+
+        using (var headerRequest = new HttpRequestMessage(
+            HttpMethod.Get, "/refresh_access_token?grant_type=th_refresh_token"))
+        {
+            headerRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", currentToken);
+            using var headerResponse = await client.SendAsync(headerRequest, ct);
+
+            if (headerResponse.IsSuccessStatusCode)
+            {
+                return await headerResponse.Content.ReadFromJsonAsync<ThreadsRefreshResponse>(JsonOptions, ct);
+            }
+
+            if (headerResponse.StatusCode is not (HttpStatusCode.BadRequest or HttpStatusCode.Unauthorized
+                or HttpStatusCode.Forbidden))
+            {
+                headerResponse.EnsureSuccessStatusCode();
+            }
+
+            logger.LogWarning(
+                "Threads token refresh via Authorization header returned {Status}; retrying with the query-parameter form",
+                headerResponse.StatusCode);
+        }
+
+        var url = $"/refresh_access_token?grant_type=th_refresh_token&access_token={Uri.EscapeDataString(currentToken)}";
+        using var fallbackRequest = new HttpRequestMessage(HttpMethod.Get, url);
+        using var fallbackResponse = await client.SendAsync(fallbackRequest, ct);
+        fallbackResponse.EnsureSuccessStatusCode();
+        return await fallbackResponse.Content.ReadFromJsonAsync<ThreadsRefreshResponse>(JsonOptions, ct);
+    }
+
+    private async Task<IReadOnlyList<ThreadsConversationItem>> SafeGetPagedAsync(
+        string baseUrl, DateTimeOffset? since, CancellationToken ct)
+    {
+        try
+        {
+            return await GetPagedAsync(baseUrl, since, ct);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Failed to fetch Threads list at {Path} (scope may be missing)", PathOf(baseUrl));
+            return [];
+        }
+    }
+
+    private async Task<IReadOnlyList<ThreadsConversationItem>> GetPagedAsync(
+        string baseUrl, DateTimeOffset? since, CancellationToken ct)
+    {
+        var items = new List<ThreadsConversationItem>();
+        var url = $"{baseUrl}&limit={PageSize}";
         if (since is not null)
         {
             url += $"&since={Uri.EscapeDataString(since.Value.ToUniversalTime().ToString("o"))}";
         }
-        return url;
-    }
 
-    private async Task<IReadOnlyList<ThreadsConversationItem>> SafeGetListAsync(string url, CancellationToken ct)
-    {
-        try
+        var firstPageUrl = url;
+        string? after = null;
+
+        for (var page = 0; page < MaxPages; page++)
         {
-            var response = await GetAsync<ThreadsListResponse<ThreadsConversationItem>>(url, ct);
-            return response?.Data ?? [];
+            var pageUrl = after is null ? firstPageUrl : $"{firstPageUrl}&after={Uri.EscapeDataString(after)}";
+            var response = await GetAsync<ThreadsListResponse<ThreadsConversationItem>>(pageUrl, ct);
+
+            var data = response?.Data;
+            if (data is null || data.Count == 0)
+            {
+                break;
+            }
+            items.AddRange(data);
+
+            after = response?.Paging?.Cursors?.After;
+            if (after is null || data.Count < PageSize)
+            {
+                break;
+            }
         }
-        catch (Exception ex)
-        {
-            logger.LogWarning(ex, "Failed to fetch Threads list at {Url} (scope may be missing)", url);
-            return [];
-        }
+
+        return items;
     }
 
     private async Task<T?> GetAsync<T>(string url, CancellationToken ct)
     {
         var (token, _) = tokenStore.Current;
+        var client = httpClientFactory.CreateClient(HttpClientName);
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        using var response = await httpClient.SendAsync(request, ct);
+        using var response = await client.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct);
+    }
+
+    // Logs the path without the query string, which carries `since` cursors and field lists.
+    private static string PathOf(string url)
+    {
+        var queryStart = url.IndexOf('?');
+        return queryStart < 0 ? url : url[..queryStart];
     }
 
     private SocialPost MapToSocialPost(ThreadsConversationItem item, bool isOwn, int likeCount)
