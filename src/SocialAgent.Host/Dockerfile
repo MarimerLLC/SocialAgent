@@ -11,6 +11,8 @@ COPY ["global.json", "."]
 # silently skips it and the later `publish --no-restore` fails with NETSDK1004.
 COPY ["src/SocialAgent.Core/SocialAgent.Core.csproj", "src/SocialAgent.Core/"]
 COPY ["src/SocialAgent.Data/SocialAgent.Data.csproj", "src/SocialAgent.Data/"]
+COPY ["src/SocialAgent.Data.Migrations.Sqlite/SocialAgent.Data.Migrations.Sqlite.csproj", "src/SocialAgent.Data.Migrations.Sqlite/"]
+COPY ["src/SocialAgent.Data.Migrations.Npgsql/SocialAgent.Data.Migrations.Npgsql.csproj", "src/SocialAgent.Data.Migrations.Npgsql/"]
 COPY ["src/SocialAgent.Analytics/SocialAgent.Analytics.csproj", "src/SocialAgent.Analytics/"]
 COPY ["src/SocialAgent.Providers.Mastodon/SocialAgent.Providers.Mastodon.csproj", "src/SocialAgent.Providers.Mastodon/"]
 COPY ["src/SocialAgent.Providers.Bluesky/SocialAgent.Providers.Bluesky.csproj", "src/SocialAgent.Providers.Bluesky/"]

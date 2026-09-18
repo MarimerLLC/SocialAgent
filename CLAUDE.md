@@ -80,7 +80,7 @@ Each provider implements `ISocialMediaProvider` and is registered via DI extensi
 - **Async-first** — all I/O is Task-based
 - **NSubstitute** is the mocking framework for tests
 - **Configuration** — standard .NET config stack: `appsettings.json`, environment variables, user secrets, k8s Secrets
-- **Database** — EF Core with SQLite for dev, PostgreSQL for prod. Schema changes go through **EF Core migrations**: add the migration to *both* `SocialAgent.Data.Migrations.Sqlite` and `SocialAgent.Data.Migrations.Npgsql`, or the other dialect silently falls behind. `DatabaseMigrationService` applies pending migrations at startup, and adopts a pre-1.5.0 database (schema present, no `__EFMigrationsHistory`) by recording the baseline as already applied.
+- **Database** — EF Core with SQLite for dev, PostgreSQL for prod. Schema changes go through **EF Core migrations**: add the migration to *both* `SocialAgent.Data.Migrations.Sqlite` and `SocialAgent.Data.Migrations.Npgsql`, or the other dialect silently falls behind. `DatabaseMigrationService` applies pending migrations at startup, and adopts a pre-1.5.0 database (schema present, no `__EFMigrationsHistory`) by recording the baseline as already applied. Note: `IHistoryRepository.ExistsAsync()` reports **true on Npgsql even when the history table is absent**, so that detection queries the catalogue directly — verified against a real PostgreSQL 17 server, not just SQLite.
 - **Analytics** — aggregate in SQL via the `ISocialDataRepository` aggregate methods. Do not pull a retention window into memory to sum it.
 - **Health checks** — `/health/ready` is tagged `ready` and exercises the database; `/health/live` deliberately runs no checks, so a database blip does not restart the pod.
 
