@@ -86,20 +86,6 @@ namespace SocialAgent.Data.Migrations.Npgsql.Migrations
                     table.PrimaryKey("PK_Profiles", x => x.ProviderId);
                 });
 
-            migrationBuilder.CreateTable(
-                name: "ProviderTokens",
-                columns: table => new
-                {
-                    ProviderId = table.Column<string>(type: "text", nullable: false),
-                    AccessToken = table.Column<string>(type: "text", nullable: false),
-                    ExpiresAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
-                    UpdatedAt = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false)
-                },
-                constraints: table =>
-                {
-                    table.PrimaryKey("PK_ProviderTokens", x => x.ProviderId);
-                });
-
             migrationBuilder.CreateIndex(
                 name: "IX_Notifications_CreatedAt",
                 table: "Notifications",
@@ -147,9 +133,6 @@ namespace SocialAgent.Data.Migrations.Npgsql.Migrations
 
             migrationBuilder.DropTable(
                 name: "Profiles");
-
-            migrationBuilder.DropTable(
-                name: "ProviderTokens");
         }
     }
 }

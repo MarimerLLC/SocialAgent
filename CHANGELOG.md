@@ -83,11 +83,15 @@ adheres to [Semantic Versioning](https://semver.org/).
 - Agent version bumped from **1.4.0** to **1.5.0**.
 
 ### Migration notes
-- The first 1.5.0 start adopts the existing database: `DatabaseMigrationService` detects a schema
-  with no `__EFMigrationsHistory`, creates that table, and records `InitialCreate` as applied.
-  No data is touched. This path is covered by tests on SQLite and by opt-in PostgreSQL tests
-  (`SOCIALAGENT_TEST_POSTGRES`); **take a backup before the first production rollout** — it had
-  no dry-run against the live database.
+- The first 1.5.0 start adopts the existing database. Migrations mirror the real schema history:
+  `InitialCreate` is the 1.3.x schema and `AddProviderTokens` is the table 1.4.0 introduced.
+  `DatabaseMigrationService` records each migration whose table already exists as applied, then
+  `MigrateAsync` creates anything genuinely missing — so a 1.3.x database (which production is)
+  gains `ProviderTokens`, while a 1.4.0 database is left as it is. No existing rows are touched.
+- Rehearsed against a restored copy of the production database (2026-09-21 backup, Postgres
+  16.12): `InitialCreate` stamped, `AddProviderTokens` applied, all row counts unchanged, and
+  skills answered from the upgraded data. **Take a fresh backup immediately before the rollout
+  anyway.**
 - `AspNetCore.HealthChecks.NpgSql` was removed from `Directory.Packages.props`; it was never
   referenced by any project.
 - The Threads ConfigMap/Secret references in `deploy/k8s/deployment.yaml` are now `optional: true`.

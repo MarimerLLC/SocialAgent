@@ -61,7 +61,7 @@ public class DatabaseMigrationServiceTests
 
         await using var db = CreateContext();
         var applied = await db.Database.GetAppliedMigrationsAsync();
-        Assert.AreEqual(1, applied.Count(), "the baseline migration should be applied");
+        Assert.AreEqual(db.Database.GetMigrations().Count(), applied.Count(), "every migration should be applied");
         Assert.AreEqual(0, (await db.Database.GetPendingMigrationsAsync()).Count());
 
         // The schema is usable.
@@ -93,7 +93,7 @@ public class DatabaseMigrationServiceTests
 
         await using var db = CreateContext();
         var applied = (await db.Database.GetAppliedMigrationsAsync()).ToList();
-        Assert.AreEqual(1, applied.Count, "the baseline should be recorded as already applied");
+        Assert.AreEqual(db.Database.GetMigrations().Count(), applied.Count, "every migration should be recorded as applied");
         Assert.AreEqual(0, (await db.Database.GetPendingMigrationsAsync()).Count());
 
         Assert.AreEqual(1, await db.Posts.CountAsync(), "existing rows must survive adoption");
@@ -111,7 +111,38 @@ public class DatabaseMigrationServiceTests
         await CreateService(services).StartAsync(CancellationToken.None);
 
         await using var db = CreateContext();
-        Assert.AreEqual(1, (await db.Database.GetAppliedMigrationsAsync()).Count());
+        Assert.AreEqual(db.Database.GetMigrations().Count(), (await db.Database.GetAppliedMigrationsAsync()).Count());
+    }
+
+    [TestMethod]
+    public async Task Version13Database_WithoutProviderTokens_GainsTheTable()
+    {
+        // Production's actual shape: a 1.3.x schema that predates ProviderTokens entirely.
+        await using (var legacy = CreateContext())
+        {
+            await legacy.Database.EnsureCreatedAsync();
+            await legacy.Database.ExecuteSqlRawAsync("DROP TABLE \"ProviderTokens\"");
+            legacy.Posts.Add(NewPost("existing"));
+            await legacy.SaveChangesAsync();
+        }
+
+        await using var services = BuildServices();
+        await CreateService(services).StartAsync(CancellationToken.None);
+
+        await using var db = CreateContext();
+        Assert.AreEqual(0, (await db.Database.GetPendingMigrationsAsync()).Count());
+        Assert.AreEqual(1, await db.Posts.CountAsync(), "existing rows must survive adoption");
+
+        // The table must really exist, not merely be recorded as migrated.
+        db.ProviderTokens.Add(new ProviderToken
+        {
+            ProviderId = "threads",
+            AccessToken = "token-1",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(30),
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync();
+        Assert.AreEqual(1, await db.ProviderTokens.CountAsync());
     }
 
     [TestMethod]
@@ -128,7 +159,7 @@ public class DatabaseMigrationServiceTests
         await CreateService(services).StartAsync(CancellationToken.None);
 
         await using var db = CreateContext();
-        Assert.AreEqual(1, (await db.Database.GetAppliedMigrationsAsync()).Count());
+        Assert.AreEqual(db.Database.GetMigrations().Count(), (await db.Database.GetAppliedMigrationsAsync()).Count());
         Assert.AreEqual(0, await db.Posts.CountAsync());
     }
 
@@ -199,7 +230,7 @@ public class DatabaseMigrationServicePostgresTests
         await CreateService().StartAsync(CancellationToken.None);
 
         await using var db = CreateContext();
-        Assert.AreEqual(1, (await db.Database.GetAppliedMigrationsAsync()).Count());
+        Assert.AreEqual(db.Database.GetMigrations().Count(), (await db.Database.GetAppliedMigrationsAsync()).Count());
         Assert.AreEqual(0, (await db.Database.GetPendingMigrationsAsync()).Count());
     }
 
@@ -226,9 +257,35 @@ public class DatabaseMigrationServicePostgresTests
         await CreateService().StartAsync(CancellationToken.None);
 
         await using var db = CreateContext();
-        Assert.AreEqual(1, (await db.Database.GetAppliedMigrationsAsync()).Count());
+        Assert.AreEqual(db.Database.GetMigrations().Count(), (await db.Database.GetAppliedMigrationsAsync()).Count());
         Assert.AreEqual(0, (await db.Database.GetPendingMigrationsAsync()).Count());
         Assert.AreEqual(1, await db.Posts.CountAsync(), "existing rows must survive adoption");
+    }
+
+    [TestMethod]
+    public async Task Version13Database_WithoutProviderTokens_GainsTheTable()
+    {
+        // Production's actual shape: a 1.3.x schema that predates ProviderTokens entirely.
+        await ResetAsync();
+        await using (var legacy = CreateContext())
+        {
+            await legacy.Database.EnsureCreatedAsync();
+            await legacy.Database.ExecuteSqlRawAsync("DROP TABLE \"ProviderTokens\"");
+        }
+
+        await CreateService().StartAsync(CancellationToken.None);
+
+        await using var db = CreateContext();
+        Assert.AreEqual(0, (await db.Database.GetPendingMigrationsAsync()).Count());
+        db.ProviderTokens.Add(new ProviderToken
+        {
+            ProviderId = "threads",
+            AccessToken = "token-1",
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(30),
+            UpdatedAt = DateTimeOffset.UtcNow
+        });
+        await db.SaveChangesAsync();
+        Assert.AreEqual(1, await db.ProviderTokens.CountAsync(), "the missing table must actually be created");
     }
 
     [TestMethod]
@@ -240,6 +297,6 @@ public class DatabaseMigrationServicePostgresTests
         await CreateService().StartAsync(CancellationToken.None);
 
         await using var db = CreateContext();
-        Assert.AreEqual(1, (await db.Database.GetAppliedMigrationsAsync()).Count());
+        Assert.AreEqual(db.Database.GetMigrations().Count(), (await db.Database.GetAppliedMigrationsAsync()).Count());
     }
 }

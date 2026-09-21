@@ -11,7 +11,7 @@ using SocialAgent.Data;
 namespace SocialAgent.Data.Migrations.Sqlite.Migrations
 {
     [DbContext(typeof(SocialAgentDbContext))]
-    [Migration("20260918170029_InitialCreate")]
+    [Migration("20260921233759_InitialCreate")]
     partial class InitialCreate
     {
         /// <inheritdoc />
@@ -37,26 +37,6 @@ namespace SocialAgent.Data.Migrations.Sqlite.Migrations
                     b.HasKey("ProviderId");
 
                     b.ToTable("PollStates");
-                });
-
-            modelBuilder.Entity("SocialAgent.Core.Models.ProviderToken", b =>
-                {
-                    b.Property<string>("ProviderId")
-                        .HasColumnType("TEXT");
-
-                    b.Property<string>("AccessToken")
-                        .IsRequired()
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("ExpiresAt")
-                        .HasColumnType("TEXT");
-
-                    b.Property<DateTimeOffset>("UpdatedAt")
-                        .HasColumnType("TEXT");
-
-                    b.HasKey("ProviderId");
-
-                    b.ToTable("ProviderTokens");
                 });
 
             modelBuilder.Entity("SocialAgent.Core.Models.SocialNotification", b =>

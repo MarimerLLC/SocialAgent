@@ -10,11 +10,12 @@ namespace SocialAgent.Host.Services;
 /// <summary>
 /// Brings the database up to the current model using EF Core migrations.
 ///
-/// Databases created before 1.5.0 were provisioned by <c>EnsureCreatedAsync</c> and therefore have
-/// the right tables but no <c>__EFMigrationsHistory</c>. Running the baseline migration against one
-/// of those would fail on "table already exists", so such a database is adopted instead: the history
-/// table is created and the baseline recorded as already applied, after which later migrations run
-/// normally.
+/// Databases created before 1.5.0 were provisioned by <c>EnsureCreatedAsync</c> and have no
+/// <c>__EFMigrationsHistory</c>. Running the migrations against one would fail on "table already
+/// exists", so such a database is adopted instead: each migration whose tables are already present is
+/// recorded as applied, and <c>MigrateAsync</c> then creates whatever is genuinely missing. That
+/// matters because the fleet is not uniform — a 1.3.x database lacks <c>ProviderTokens</c>, which a
+/// 1.4.0 database has.
 /// </summary>
 public class DatabaseMigrationService(
     IServiceScopeFactory scopeFactory,
@@ -22,6 +23,17 @@ public class DatabaseMigrationService(
 {
     /// <summary>EF Core's default migrations-history table; this project does not rename it.</summary>
     private const string HistoryTableName = "__EFMigrationsHistory";
+
+    /// <summary>
+    /// The table each pre-1.5.0 migration introduced, keyed by migration name (the id minus its
+    /// timestamp). Adoption stamps a migration only when its table already exists. Migrations added
+    /// from 1.5.0 on never need an entry: every 1.5.0+ database has a history table.
+    /// </summary>
+    private static readonly (string Migration, string Table)[] LegacyMigrations =
+    [
+        ("InitialCreate", "Posts"),
+        ("AddProviderTokens", "ProviderTokens"),
+    ];
 
     public async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -105,30 +117,48 @@ public class DatabaseMigrationService(
     private async Task AdoptLegacyDatabaseAsync(
         SocialAgentDbContext db, IHistoryRepository history, CancellationToken ct)
     {
-        var baseline = db.Database.GetMigrations().FirstOrDefault();
-        if (baseline is null)
+        var migrations = db.Database.GetMigrations().ToList();
+        var toStamp = new List<string>();
+
+        foreach (var (name, table) in LegacyMigrations)
         {
-            logger.LogWarning("No migrations found in the configured migrations assembly; skipping baseline adoption");
+            var id = migrations.FirstOrDefault(m => m.EndsWith("_" + name, StringComparison.Ordinal));
+            if (id is null)
+            {
+                logger.LogWarning("Migration {Migration} not found in the migrations assembly; not stamping it", name);
+                continue;
+            }
+            if (await TableExistsAsync(db, table, ct))
+            {
+                toStamp.Add(id);
+            }
+        }
+
+        if (toStamp.Count == 0)
+        {
             return;
         }
 
         logger.LogInformation(
-            "Existing database has no migrations history; adopting it by recording {Baseline} as applied",
-            baseline);
+            "Existing database has no migrations history; adopting it by recording {Migrations} as applied",
+            string.Join(", ", toStamp));
 
         // EF Core's own version string, recorded as metadata in the history table.
-        var productVersion = typeof(DbContext).Assembly.GetName().Version?.ToString() ?? "10.0.0";
+        var productVersion = typeof(DbContext).Assembly.GetName().Version?.ToString(3) ?? "10.0.0";
 
         var strategy = db.Database.CreateExecutionStrategy();
         await strategy.ExecuteAsync(async () =>
         {
             await using var transaction = await db.Database.BeginTransactionAsync(ct);
             await db.Database.ExecuteSqlRawAsync(history.GetCreateIfNotExistsScript(), ct);
-            await db.Database.ExecuteSqlRawAsync(
-                history.GetInsertScript(new HistoryRow(baseline, productVersion)), ct);
+            foreach (var id in toStamp)
+            {
+                await db.Database.ExecuteSqlRawAsync(
+                    history.GetInsertScript(new HistoryRow(id, productVersion)), ct);
+            }
             await transaction.CommitAsync(ct);
         });
 
-        logger.LogInformation("Baseline recorded; later migrations will apply normally");
+        logger.LogInformation("Adoption recorded; any remaining migrations will now apply");
     }
 }

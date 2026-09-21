@@ -12,8 +12,8 @@ using SocialAgent.Data;
 namespace SocialAgent.Data.Migrations.Npgsql.Migrations
 {
     [DbContext(typeof(SocialAgentDbContext))]
-    [Migration("20260918170037_InitialCreate")]
-    partial class InitialCreate
+    [Migration("20260921233812_AddProviderTokens")]
+    partial class AddProviderTokens
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
