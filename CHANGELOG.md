@@ -35,6 +35,12 @@ adheres to [Semantic Versioning](https://semver.org/).
   60 restarts from exactly this. The handlers now key off the stopping token instead, so real
   shutdown still propagates while timeouts are logged and polling continues. The same filter is
   corrected in the providers, where it defeated their graceful-degradation paths.
+- **Reposts and boosts were recorded as your own posts, inflating every engagement figure.**
+  Bluesky's `getAuthorFeed` includes the account's reposts, and a reposted item carries the
+  original author and *their* like and repost counts; Mastodon returns a boost as a status with
+  empty content and the original author's engagement. In the live database this made two
+  reposted posts by other accounts look like own posts with 39,415 and 3 likes. Bluesky now keeps
+  only items whose author DID matches the session, and Mastodon passes `exclude_reblogs=true`.
 - **Polling silently dropped data.** Each provider fetched one fixed page and filtered `since`
   client-side, so anything beyond that page in a poll interval was lost. All three providers now
   page (Mastodon `max_id`, Bluesky `cursor`, Threads `after`) until they pass the cutoff.
@@ -94,6 +100,9 @@ adheres to [Semantic Versioning](https://semver.org/).
   anyway.**
 - `AspNetCore.HealthChecks.NpgSql` was removed from `Directory.Packages.props`; it was never
   referenced by any project.
+- Rows already stored for reposts and boosts are not rewritten by the upsert; they age out with
+  the 30-day retention window, or can be removed directly:
+  `DELETE FROM "Posts" WHERE ("ProviderId" = 'bluesky' AND "AuthorHandle" <> (SELECT "Handle" FROM "Profiles" WHERE "ProviderId" = 'bluesky')) OR ("ProviderId" = 'mastodon' AND "Content" = '');`
 - The Threads ConfigMap/Secret references in `deploy/k8s/deployment.yaml` are now `optional: true`.
   Threads is disabled and those keys are absent from the deployed ConfigMap and Secret; without
   this the pod would land in `CreateContainerConfigError`.

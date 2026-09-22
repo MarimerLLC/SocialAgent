@@ -103,6 +103,15 @@ public class BlueskyProvider(
                     reachedCutoff = true;
                     continue;
                 }
+
+                // getAuthorFeed includes the account's reposts, and a reposted item carries the
+                // original author and *their* engagement. Recording those as own posts inflated
+                // every engagement figure, so keep only what this account actually wrote.
+                if (!string.Equals(item.Post.Author?.Did, session.Did, StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
                 posts.Add(MapToSocialPost(item.Post, isOwn: true));
             }
 

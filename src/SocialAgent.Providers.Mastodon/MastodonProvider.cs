@@ -85,7 +85,10 @@ public class MastodonProvider(
 
         for (var page = 0; page < MaxPages; page++)
         {
-            var url = $"/api/v1/accounts/{account.Id}/statuses?limit={PageSize}";
+            // exclude_reblogs: a boost is returned as a status with empty content carrying the
+            // original author's engagement, which inflated every engagement figure when recorded
+            // as an own post.
+            var url = $"/api/v1/accounts/{account.Id}/statuses?limit={PageSize}&exclude_reblogs=true";
             if (maxId is not null)
             {
                 url += $"&max_id={Uri.EscapeDataString(maxId)}";

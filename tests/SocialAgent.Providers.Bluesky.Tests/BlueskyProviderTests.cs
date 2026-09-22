@@ -188,6 +188,32 @@ public class BlueskyProviderTests
         Assert.AreEqual("https://bsky.app/profile/me.bsky.social/post/xyz", posts[0].Url);
     }
 
+    [TestMethod]
+    public async Task GetRecentPosts_ExcludesReposts()
+    {
+        // getAuthorFeed mixes in the account's reposts, which carry the original author and their
+        // engagement. Counting those as own posts inflated every engagement figure.
+        var now = DateTimeOffset.UtcNow;
+        var feed = FeedJson(
+            [
+                BuildPost("mine", "cid-mine", "my own post", now, now),
+                BuildPost("theirs", "cid-theirs", "a viral post", now, now,
+                    authorDid: "did:plc:someoneelse", authorHandle: "markhamillofficial.bsky.social")
+            ],
+            cursor: null);
+
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, SessionJson),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, feed));
+        var provider = CreateProvider(handler);
+
+        var posts = await provider.GetRecentPostsAsync();
+
+        Assert.AreEqual(1, posts.Count, "a repost by another author must not be recorded");
+        Assert.AreEqual("my own post", posts[0].Content);
+        Assert.AreEqual("me.bsky.social", posts[0].AuthorHandle);
+    }
+
     private static string BuildFeed(int count, DateTimeOffset indexedAt, string? cursor)
     {
         var posts = Enumerable.Range(0, count)
@@ -197,13 +223,14 @@ public class BlueskyProviderTests
     }
 
     private static object BuildPost(
-        string rkey, string cid, string text, DateTimeOffset createdAt, DateTimeOffset indexedAt) => new
+        string rkey, string cid, string text, DateTimeOffset createdAt, DateTimeOffset indexedAt,
+        string authorDid = "did:plc:abc", string authorHandle = "me.bsky.social") => new
         {
             post = new
             {
-                uri = $"at://did:plc:abc/app.bsky.feed.post/{rkey}",
+                uri = $"at://{authorDid}/app.bsky.feed.post/{rkey}",
                 cid,
-                author = new { did = "did:plc:abc", handle = "me.bsky.social" },
+                author = new { did = authorDid, handle = authorHandle },
                 record = new { text, createdAt },
                 likeCount = 1,
                 repostCount = 2,

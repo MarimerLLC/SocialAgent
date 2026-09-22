@@ -134,6 +134,23 @@ public class MastodonProviderTests
             "a first-ever poll should not page indefinitely");
     }
 
+    [TestMethod]
+    public async Task GetRecentPosts_ExcludesBoosts()
+    {
+        // A boost comes back as a status with empty content carrying the original author's
+        // engagement, so it must be filtered server-side rather than recorded as an own post.
+        var handler = new StubHttpMessageHandler((request, _) =>
+            request.RequestUri!.AbsolutePath.Contains("verify_credentials")
+                ? StubHttpMessageHandler.Json(HttpStatusCode.OK, AccountJson)
+                : StubHttpMessageHandler.Json(HttpStatusCode.OK, StatusesJson(1, DateTimeOffset.UtcNow)));
+        var provider = CreateProvider(handler);
+
+        await provider.GetRecentPostsAsync();
+
+        var statuses = handler.Requests.Single(r => r.PathAndQuery.Contains("/statuses"));
+        StringAssert.Contains(statuses.PathAndQuery, "exclude_reblogs=true");
+    }
+
     private static string StatusesJson(
         int count, DateTimeOffset createdAt, string content = "<p>hello</p>", int startId = 0)
     {
