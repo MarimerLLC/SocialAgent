@@ -170,21 +170,38 @@ public class BlueskyProvider(
     private async Task<T?> GetAsync<T>(string url, CancellationToken ct)
     {
         using var response = await SendAuthenticatedAsync(() => new HttpRequestMessage(HttpMethod.Get, url), ct);
-        response.EnsureSuccessStatusCode();
+        if (!response.IsSuccessStatusCode)
+        {
+            // XRPC puts the useful part in the body ({"error":"ExpiredToken",...}). A bare
+            // "400 (Bad Request)" is what hid the original expiry bug in production logs.
+            var error = await ReadXrpcErrorAsync(response, ct);
+            throw new HttpRequestException(
+                $"Bluesky {PathOf(url)} returned {(int)response.StatusCode} {error.Error}: {error.Message}",
+                inner: null,
+                response.StatusCode);
+        }
         return await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct);
     }
 
     /// <summary>
-    /// Sends an authenticated request, recovering from an expired session in-process. Bluesky
-    /// access JWTs live about two hours, so without this the provider would 401 on every call
-    /// until the pod restarted.
+    /// Sends an authenticated request, keeping the session alive in-process. Bluesky access JWTs
+    /// live about two hours; without this the provider fails every call once the token lapses,
+    /// until the pod restarts.
     /// </summary>
     private async Task<HttpResponseMessage> SendAuthenticatedAsync(
         Func<HttpRequestMessage> requestFactory, CancellationToken ct)
     {
         var session = await EnsureSessionAsync(ct);
+
+        // Refresh ahead of expiry using the token's own exp claim, so the common case never
+        // depends on recognising an error response at all.
+        if (IsExpiringSoon(session.AccessJwt, DateTimeOffset.UtcNow))
+        {
+            session = await RenewSessionAsync(session, ct);
+        }
+
         var response = await SendAsync(requestFactory, session.AccessJwt, ct);
-        if (response.StatusCode != HttpStatusCode.Unauthorized)
+        if (!await IsAuthFailureAsync(response, ct))
         {
             return response;
         }
@@ -192,6 +209,93 @@ public class BlueskyProvider(
         response.Dispose();
         session = await RenewSessionAsync(session, ct);
         return await SendAsync(requestFactory, session.AccessJwt, ct);
+    }
+
+    /// <summary>
+    /// True when a response means the session itself is no good. Bluesky reports an expired or
+    /// rejected access token as <b>400</b> with an XRPC error of <c>ExpiredToken</c> or
+    /// <c>InvalidToken</c> — not 401 — which the first version of this recovery missed, so the
+    /// provider died two hours after deploy exactly as before. Any other 400 is a real request
+    /// error and is left alone.
+    /// </summary>
+    private static async Task<bool> IsAuthFailureAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        if (response.StatusCode == HttpStatusCode.Unauthorized)
+        {
+            return true;
+        }
+        if (response.StatusCode != HttpStatusCode.BadRequest)
+        {
+            return false;
+        }
+
+        var error = await ReadXrpcErrorAsync(response, ct);
+        return error.Error is "ExpiredToken" or "InvalidToken";
+    }
+
+    /// <summary>
+    /// Reads an XRPC error body. It is read twice on a failure — once to decide whether the session
+    /// expired, once for the exception message — so it is buffered and read as a string, which is
+    /// repeatable; reading it as a stream would consume it on the first pass.
+    /// </summary>
+    private static async Task<XrpcError> ReadXrpcErrorAsync(HttpResponseMessage response, CancellationToken ct)
+    {
+        try
+        {
+            await response.Content.LoadIntoBufferAsync(ct);
+            var body = await response.Content.ReadAsStringAsync(ct);
+            return JsonSerializer.Deserialize<XrpcError>(body, JsonOptions) ?? XrpcError.Unknown;
+        }
+        catch (JsonException)
+        {
+            return XrpcError.Unknown;
+        }
+    }
+
+    private sealed record XrpcError(string? Error, string? Message)
+    {
+        public static readonly XrpcError Unknown = new("Unknown", "no XRPC error body");
+    }
+
+    /// <summary>How far ahead of a token's expiry to refresh it.</summary>
+    private static readonly TimeSpan RefreshLeeway = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Whether the JWT's <c>exp</c> claim falls within <see cref="RefreshLeeway"/> of
+    /// <paramref name="now"/>. The token is only decoded, not verified — the server remains the
+    /// authority; this just avoids sending a request we know will be rejected. A token whose
+    /// expiry cannot be read returns false and relies on the reactive path.
+    /// </summary>
+    internal static bool IsExpiringSoon(string jwt, DateTimeOffset now)
+    {
+        var parts = jwt.Split('.');
+        if (parts.Length != 3)
+        {
+            return false;
+        }
+
+        try
+        {
+            var payload = parts[1].Replace('-', '+').Replace('_', '/');
+            payload = payload.PadRight(payload.Length + (4 - payload.Length % 4) % 4, '=');
+            using var doc = JsonDocument.Parse(Convert.FromBase64String(payload));
+            if (!doc.RootElement.TryGetProperty("exp", out var exp) || !exp.TryGetInt64(out var seconds))
+            {
+                return false;
+            }
+            return DateTimeOffset.FromUnixTimeSeconds(seconds) - RefreshLeeway <= now;
+        }
+        catch (Exception ex) when (ex is FormatException or JsonException)
+        {
+            return false;
+        }
+    }
+
+    // The query string may carry cursors and DIDs; the path is enough to identify the call.
+    private static string PathOf(string url)
+    {
+        var queryStart = url.IndexOf('?');
+        return queryStart < 0 ? url : url[..queryStart];
     }
 
     private async Task<HttpResponseMessage> SendAsync(

@@ -214,6 +214,121 @@ public class BlueskyProviderTests
         Assert.AreEqual("me.bsky.social", posts[0].AuthorHandle);
     }
 
+    // --- Expiry as Bluesky actually reports it ------------------------------------------------
+    // Bluesky answers a lapsed or rejected access token with 400 + an XRPC error, not 401. The
+    // first recovery only handled 401, and production died two hours after deploy regardless.
+
+    private static HttpResponseMessage XrpcError(string error, string message) =>
+        StubHttpMessageHandler.Json(HttpStatusCode.BadRequest,
+            JsonSerializer.Serialize(new { error, message }));
+
+    [TestMethod]
+    public async Task ExpiredToken400_IsRefreshed_AndRequestRetried()
+    {
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, SessionJson),
+            () => XrpcError("ExpiredToken", "Token has expired"),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, RefreshedSessionJson),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, ProfileJson));
+        var provider = CreateProvider(handler);
+
+        var profile = await provider.GetProfileAsync();
+
+        Assert.AreEqual("me.bsky.social", profile.Handle);
+        StringAssert.Contains(handler.Requests[2].PathAndQuery, "refreshSession");
+        Assert.AreEqual("refresh-1", handler.Requests[2].AuthParameter);
+        Assert.AreEqual("access-2", handler.Requests[3].AuthParameter);
+    }
+
+    [TestMethod]
+    public async Task InvalidToken400_IsRefreshed_AndRequestRetried()
+    {
+        // What bsky.social returned when probed with an unverifiable token.
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, SessionJson),
+            () => XrpcError("InvalidToken", "Token could not be verified"),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, RefreshedSessionJson),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, ProfileJson));
+        var provider = CreateProvider(handler);
+
+        await provider.GetProfileAsync();
+
+        StringAssert.Contains(handler.Requests[2].PathAndQuery, "refreshSession");
+    }
+
+    [TestMethod]
+    public async Task OrdinaryBadRequest_IsNotMistakenForExpiry_AndNamesTheError()
+    {
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, SessionJson),
+            () => XrpcError("InvalidRequest", "Error: actor must be a valid did or a handle"));
+        var provider = CreateProvider(handler);
+
+        var ex = await Assert.ThrowsAsync<HttpRequestException>(() => provider.GetProfileAsync());
+
+        Assert.IsFalse(handler.Requests.Any(r => r.PathAndQuery.Contains("refreshSession")),
+            "a genuine request error must not trigger a session refresh");
+        StringAssert.Contains(ex.Message, "InvalidRequest", "the XRPC error name must reach the logs");
+        StringAssert.Contains(ex.Message, "app.bsky.actor.getProfile");
+    }
+
+    [TestMethod]
+    public async Task TokenNearExpiry_IsRefreshedBeforeTheRequest()
+    {
+        // Proactive path: the token's own exp claim says it is about to lapse, so no request is
+        // sent with it at all.
+        var nearlyExpired = Jwt(DateTimeOffset.UtcNow.AddMinutes(1));
+        var session = JsonSerializer.Serialize(new
+        {
+            accessJwt = nearlyExpired, refreshJwt = "refresh-1", did = "did:plc:abc", handle = "me.bsky.social"
+        });
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, session),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, RefreshedSessionJson),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, ProfileJson));
+        var provider = CreateProvider(handler);
+
+        await provider.GetProfileAsync();
+
+        StringAssert.Contains(handler.Requests[1].PathAndQuery, "refreshSession");
+        Assert.AreEqual("access-2", handler.Requests[2].AuthParameter);
+        Assert.IsFalse(handler.Requests.Any(r => r.AuthParameter == nearlyExpired
+                && r.PathAndQuery.Contains("getProfile")),
+            "the expiring token should never be sent to a data endpoint");
+    }
+
+    [TestMethod]
+    public void IsExpiringSoon_ReadsTheExpClaim()
+    {
+        var now = new DateTimeOffset(2026, 9, 22, 22, 0, 0, TimeSpan.Zero);
+
+        Assert.IsFalse(BlueskyProvider.IsExpiringSoon(Jwt(now.AddHours(2)), now), "fresh token");
+        Assert.IsTrue(BlueskyProvider.IsExpiringSoon(Jwt(now.AddMinutes(4)), now), "within the leeway");
+        Assert.IsTrue(BlueskyProvider.IsExpiringSoon(Jwt(now.AddMinutes(-30)), now), "already expired");
+    }
+
+    [TestMethod]
+    public void IsExpiringSoon_UnreadableToken_DefersToTheReactivePath()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        Assert.IsFalse(BlueskyProvider.IsExpiringSoon("access-1", now));
+        Assert.IsFalse(BlueskyProvider.IsExpiringSoon("a.%%%.c", now));
+        Assert.IsFalse(BlueskyProvider.IsExpiringSoon(Jwt(null), now), "no exp claim");
+    }
+
+    /// <summary>An unsigned JWT with the given exp — enough for the client-side expiry check.</summary>
+    private static string Jwt(DateTimeOffset? exp)
+    {
+        static string B64(object o) => Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(o))
+            .TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+        object payload = exp is null
+            ? new { sub = "did:plc:abc", scope = "com.atproto.access" }
+            : new { sub = "did:plc:abc", scope = "com.atproto.access", exp = exp.Value.ToUnixTimeSeconds() };
+        return $"{B64(new { alg = "ES256K", typ = "at+jwt" })}.{B64(payload)}.sig";
+    }
+
     private static string BuildFeed(int count, DateTimeOffset indexedAt, string? cursor)
     {
         var posts = Enumerable.Range(0, count)

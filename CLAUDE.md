@@ -70,6 +70,7 @@ Each provider implements `ISocialMediaProvider` and is registered via DI extensi
 - Providers page until they pass the `since` cutoff, bounded by a `MaxPages` constant. A single fixed page silently drops data when a poll interval is busy.
 - Provider HTTP clients get `AddStandardResilienceHandler()` and a 30s timeout.
 - Provider options are validated with `ValidateOnStart` so misconfiguration fails at startup.
+- **Bluesky reports an expired access token as HTTP 400**, with XRPC error `ExpiredToken` or `InvalidToken` — not 401. Access tokens live 120 minutes; the provider refreshes proactively from the JWT `exp` claim and reactively on those errors. Do not trust a stubbed test of an external API's error shape: check the real service, as the first version of this recovery was "tested" against an invented 401 and failed in production.
 
 ### Key Conventions
 

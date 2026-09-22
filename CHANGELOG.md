@@ -4,6 +4,26 @@ All notable changes to SocialAgent are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.5.2] - 2026-09-22
+
+### Fixed
+- **Bluesky still stopped working two hours after start.** The 1.5.0 session recovery refreshed
+  only on HTTP 401, but Bluesky reports a lapsed or rejected access token as **400** with an XRPC
+  error of `ExpiredToken` or `InvalidToken`. The recovery therefore never ran: 1.5.1 in production
+  failed every Bluesky poll from exactly 2h00m after the pod started, as 1.3.4 had. The unit tests
+  had simulated a 401, so they confirmed the assumption rather than Bluesky's behaviour.
+  - The provider now refreshes **ahead of expiry**, reading the access token's own `exp` claim and
+    renewing within five minutes of it, so the normal path no longer depends on recognising an
+    error response at all.
+  - As a fallback it also refreshes and retries on 401, or on 400 whose XRPC error is
+    `ExpiredToken` or `InvalidToken`. Other 400s are real request errors and still fail.
+  - Verified against bsky.social with the production account: access tokens carry `exp` with a
+    120-minute lifetime; `refreshSession` called as the provider calls it returns 200 with every
+    field the provider needs, and the new token is accepted.
+- Bluesky errors now carry the XRPC error name and message (for example
+  `app.bsky.actor.getProfile returned 400 InvalidRequest: ...`). A bare "400 (Bad Request)" is
+  what hid this bug in the logs.
+
 ## [1.5.1] - 2026-09-22
 
 ### Fixed
