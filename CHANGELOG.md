@@ -4,6 +4,27 @@ All notable changes to SocialAgent are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.5.1] - 2026-09-22
+
+### Fixed
+- **Post engagement was frozen at whatever it was when the post was first seen.** The polling
+  loop asked providers only for posts newer than the last poll, so each post was fetched once —
+  usually minutes after publishing — and its likes, reposts and replies were never updated again.
+  In production every Mastodon row's `LastUpdated` equalled the day it was posted, and a post
+  showing 0 likes stored had 1 live. This affected every provider, not just Mastodon. Posts are
+  now re-fetched across a trailing window on every poll, and the upsert refreshes their counts.
+  Notifications still fetch only since the last poll; they carry no engagement to refresh.
+
+### Added
+- `SocialAgent:EngagementRefreshDays` (default `7`) sets that window. If the last poll is older
+  than the window — after an outage — the fetch reaches back to the last poll instead, so no gap
+  is skipped. `0` restores the previous incremental-only behaviour.
+
+### Changed
+- `ISocialDataRepository.UpsertPostsAsync` returns the number of newly inserted posts, so
+  "Stored N new posts" is still only logged for genuinely new posts now that every poll
+  re-fetches the window. Refreshes are logged at Debug.
+
 ## [1.5.0] - 2026-09-18
 
 ### Fixed

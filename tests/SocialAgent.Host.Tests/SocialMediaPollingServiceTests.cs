@@ -121,4 +121,70 @@ public class SocialMediaPollingServiceTests
         Assert.AreNotEqual(TaskStatus.Faulted, executing.Status,
             "a normal shutdown must not surface as a fault");
     }
+
+    // --- Engagement refresh window ---------------------------------------------------------
+
+    private static readonly DateTimeOffset Now = new(2026, 9, 22, 12, 0, 0, TimeSpan.Zero);
+
+    [TestMethod]
+    public void PostsSince_FirstEverPoll_PassesNullThrough()
+    {
+        Assert.IsNull(SocialMediaPollingService.PostsSince(null, refreshDays: 7, Now),
+            "a first poll must keep the providers' bounded backfill behaviour");
+    }
+
+    [TestMethod]
+    public void PostsSince_RecentPoll_ReachesBackAcrossTheWindow()
+    {
+        // Fetching only since the last poll froze each post's engagement at its first few minutes.
+        var since = SocialMediaPollingService.PostsSince(Now.AddMinutes(-5), refreshDays: 7, Now);
+
+        Assert.AreEqual(Now.AddDays(-7), since);
+    }
+
+    [TestMethod]
+    public void PostsSince_PollOlderThanWindow_UsesTheLastPoll()
+    {
+        // After an outage longer than the window, the gap must still be covered.
+        var lastPoll = Now.AddDays(-12);
+
+        Assert.AreEqual(lastPoll, SocialMediaPollingService.PostsSince(lastPoll, refreshDays: 7, Now));
+    }
+
+    [TestMethod]
+    public void PostsSince_ZeroWindow_FallsBackToIncrementalFetching()
+    {
+        // EngagementRefreshDays = 0 turns the refresh off: back to fetching only since the last poll.
+        var lastPoll = Now.AddMinutes(-5);
+
+        Assert.AreEqual(lastPoll, SocialMediaPollingService.PostsSince(lastPoll, refreshDays: 0, Now));
+    }
+
+    [TestMethod]
+    public async Task Poll_RefetchesPostsAcrossWindow_ButNotificationsOnlySinceLastPoll()
+    {
+        var lastPoll = DateTimeOffset.UtcNow.AddMinutes(-5);
+        var repository = Substitute.For<ISocialDataRepository>();
+        repository.GetPollStateAsync("mastodon", Arg.Any<CancellationToken>())
+            .Returns(new PollState { ProviderId = "mastodon", LastPollTime = lastPoll });
+
+        var provider = Provider("mastodon");
+        var services = new ServiceCollection();
+        services.AddSingleton(repository);
+        services.AddSingleton(provider);
+        await using var sp = services.BuildServiceProvider();
+
+        var service = new SocialMediaPollingService(
+            sp.GetRequiredService<IServiceScopeFactory>(),
+            NullLogger<SocialMediaPollingService>.Instance,
+            FastPolling());
+        await service.StartAsync(CancellationToken.None);
+        await Task.Delay(TimeSpan.FromSeconds(13), CancellationToken.None);
+        await service.StopAsync(CancellationToken.None);
+
+        await provider.Received().GetRecentPostsAsync(
+            Arg.Is<DateTimeOffset?>(d => d.HasValue && d.Value < DateTimeOffset.UtcNow.AddDays(-6.9)),
+            Arg.Any<CancellationToken>());
+        await provider.Received().GetNotificationsAsync(lastPoll, Arg.Any<CancellationToken>());
+    }
 }

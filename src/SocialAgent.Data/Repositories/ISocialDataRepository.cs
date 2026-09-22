@@ -14,7 +14,8 @@ public readonly record struct EngagerTally(string Handle, string Type, int Count
 public interface ISocialDataRepository
 {
     // Posts
-    Task UpsertPostsAsync(IEnumerable<SocialPost> posts, CancellationToken ct = default);
+    /// <summary>Inserts new posts and refreshes engagement on existing ones. Returns the number inserted.</summary>
+    Task<int> UpsertPostsAsync(IEnumerable<SocialPost> posts, CancellationToken ct = default);
     Task<IReadOnlyList<SocialPost>> GetPostsAsync(string? providerId = null, DateTimeOffset? since = null, bool? isOwnPost = null, int? limit = null, CancellationToken ct = default);
     Task<IReadOnlyList<SocialPost>> GetTopPostsByEngagementAsync(int count, string? providerId = null, DateTimeOffset? since = null, CancellationToken ct = default);
 

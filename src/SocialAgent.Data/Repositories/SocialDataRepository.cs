@@ -5,12 +5,12 @@ namespace SocialAgent.Data.Repositories;
 
 public class SocialDataRepository(SocialAgentDbContext db) : ISocialDataRepository
 {
-    public async Task UpsertPostsAsync(IEnumerable<SocialPost> posts, CancellationToken ct = default)
+    public async Task<int> UpsertPostsAsync(IEnumerable<SocialPost> posts, CancellationToken ct = default)
     {
         var incoming = posts.ToList();
         if (incoming.Count == 0)
         {
-            return;
+            return 0;
         }
 
         // One lookup for the whole batch instead of a SELECT per post.
@@ -21,6 +21,7 @@ public class SocialDataRepository(SocialAgentDbContext db) : ISocialDataReposito
             .ToDictionaryAsync(p => (p.ProviderId, p.PlatformPostId), ct);
 
         var now = DateTimeOffset.UtcNow;
+        var inserted = 0;
         foreach (var post in incoming)
         {
             if (existing.TryGetValue((post.ProviderId, post.PlatformPostId), out var match))
@@ -33,9 +34,11 @@ public class SocialDataRepository(SocialAgentDbContext db) : ISocialDataReposito
             else
             {
                 db.Posts.Add(post);
+                inserted++;
             }
         }
         await db.SaveChangesAsync(ct);
+        return inserted;
     }
 
     public async Task<IReadOnlyList<SocialPost>> GetPostsAsync(
