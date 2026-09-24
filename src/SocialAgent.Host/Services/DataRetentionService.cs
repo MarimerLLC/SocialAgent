@@ -25,12 +25,20 @@ public class DataRetentionService(
             {
                 await PurgeOldDataAsync(retentionDays, stoppingToken);
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            // Only a fired stoppingToken means shutdown; see SocialMediaPollingService.
+            catch (Exception ex) when (!stoppingToken.IsCancellationRequested)
             {
                 logger.LogError(ex, "Error during data retention purge");
             }
 
-            await Task.Delay(TimeSpan.FromHours(intervalHours), stoppingToken);
+            try
+            {
+                await Task.Delay(TimeSpan.FromHours(intervalHours), stoppingToken);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
         }
     }
 

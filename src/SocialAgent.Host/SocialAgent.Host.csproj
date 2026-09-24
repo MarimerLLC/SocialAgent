@@ -2,12 +2,13 @@
   <PropertyGroup>
     <RootNamespace>SocialAgent.Host</RootNamespace>
     <UserSecretsId>socialagent-host-001</UserSecretsId>
-    <Version>1.4.0</Version>
+    <Version>1.5.2</Version>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI.Hosting.A2A.AspNetCore" />
     <PackageReference Include="A2A" />
     <PackageReference Include="A2A.AspNetCore" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
@@ -21,8 +22,13 @@
     <PackageReference Include="Npgsql.OpenTelemetry" />
   </ItemGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="SocialAgent.Host.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="..\SocialAgent.Core\SocialAgent.Core.csproj" />
     <ProjectReference Include="..\SocialAgent.Data\SocialAgent.Data.csproj" />
+    <ProjectReference Include="..\SocialAgent.Data.Migrations.Sqlite\SocialAgent.Data.Migrations.Sqlite.csproj" />
+    <ProjectReference Include="..\SocialAgent.Data.Migrations.Npgsql\SocialAgent.Data.Migrations.Npgsql.csproj" />
     <ProjectReference Include="..\SocialAgent.Analytics\SocialAgent.Analytics.csproj" />
     <ProjectReference Include="..\SocialAgent.Providers.Mastodon\SocialAgent.Providers.Mastodon.csproj" />
     <ProjectReference Include="..\SocialAgent.Providers.Bluesky\SocialAgent.Providers.Bluesky.csproj" />

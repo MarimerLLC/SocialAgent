@@ -11,5 +11,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\SocialAgent.Providers.Bluesky\SocialAgent.Providers.Bluesky.csproj" />
+    <ProjectReference Include="..\SocialAgent.TestSupport\SocialAgent.TestSupport.csproj" />
   </ItemGroup>
 </Project>

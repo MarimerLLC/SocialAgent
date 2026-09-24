@@ -15,9 +15,19 @@ spec:
       labels:
         app: social-agent
     spec:
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: social-agent
-          image: rockylhotka/socialagent:1.4.0
+          image: rockylhotka/socialagent:1.5.2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8080
           env:
@@ -72,16 +82,19 @@ spec:
                 configMapKeyRef:
                   name: social-agent-config
                   key: threads-enabled
+                  optional: true
             - name: SocialAgent__Providers__Threads__IncludePostInsights
               valueFrom:
                 configMapKeyRef:
                   name: social-agent-config
                   key: threads-include-post-insights
+                  optional: true
             - name: SocialAgent__Providers__Threads__AccessToken
               valueFrom:
                 secretKeyRef:
                   name: social-agent-secrets
                   key: threads-access-token
+                  optional: true
             - name: Authentication__ApiKey
               valueFrom:
                 secretKeyRef:
@@ -127,3 +140,11 @@ spec:
             limits:
               memory: "512Mi"
               cpu: "500m"
+          # readOnlyRootFilesystem still needs somewhere writable for the temp files
+          # ASP.NET Core and Npgsql create.
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

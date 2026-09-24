@@ -6,31 +6,19 @@ namespace SocialAgent.Analytics;
 
 public class AnalyticsService(ISocialDataRepository repository) : IAnalyticsService
 {
+    private const int TopEngagerCount = 10;
+
     public async Task<EngagementSummary> GetEngagementSummaryAsync(
         string? providerId = null, DateTimeOffset? since = null, CancellationToken ct = default)
     {
         var effectiveSince = since ?? DateTimeOffset.UtcNow.AddDays(-7);
-        var posts = await repository.GetPostsAsync(providerId, effectiveSince, isOwnPost: true, ct: ct);
-        var notifications = await repository.GetNotificationsAsync(providerId, since: effectiveSince, ct: ct);
 
-        var totalLikes = posts.Sum(p => p.LikeCount);
-        var totalReposts = posts.Sum(p => p.RepostCount);
-        var totalReplies = posts.Sum(p => p.ReplyCount);
-        var postCount = posts.Count;
+        // Aggregated in the database rather than by pulling the whole period into memory.
+        var totals = await repository.GetPostEngagementTotalsAsync(providerId, effectiveSince, ct);
+        var typeCounts = await repository.GetNotificationCountsByTypeAsync(providerId, effectiveSince, ct);
+        var tallies = await repository.GetEngagerTalliesAsync(providerId, effectiveSince, ct);
 
-        var topEngagers = notifications
-            .GroupBy(n => n.FromHandle)
-            .Select(g => new TopEngager
-            {
-                Handle = g.Key,
-                InteractionCount = g.Count(),
-                MostCommonInteractionType = g.GroupBy(n => n.Type)
-                    .OrderByDescending(tg => tg.Count())
-                    .First().Key
-            })
-            .OrderByDescending(e => e.InteractionCount)
-            .Take(10)
-            .ToList();
+        var postCount = totals.PostCount;
 
         return new EngagementSummary
         {
@@ -38,15 +26,15 @@ public class AnalyticsService(ISocialDataRepository repository) : IAnalyticsServ
             PeriodStart = effectiveSince,
             PeriodEnd = DateTimeOffset.UtcNow,
             TotalPosts = postCount,
-            TotalLikes = totalLikes,
-            TotalReposts = totalReposts,
-            TotalReplies = totalReplies,
-            TotalMentions = notifications.Count(n => n.Type == "mention"),
-            NewFollowers = notifications.Count(n => n.Type == "follow"),
-            AvgLikesPerPost = postCount > 0 ? (double)totalLikes / postCount : 0,
-            AvgRepostsPerPost = postCount > 0 ? (double)totalReposts / postCount : 0,
-            AvgRepliesPerPost = postCount > 0 ? (double)totalReplies / postCount : 0,
-            TopEngagers = topEngagers
+            TotalLikes = totals.Likes,
+            TotalReposts = totals.Reposts,
+            TotalReplies = totals.Replies,
+            TotalMentions = typeCounts.GetValueOrDefault("mention"),
+            NewFollowers = typeCounts.GetValueOrDefault("follow"),
+            AvgLikesPerPost = postCount > 0 ? (double)totals.Likes / postCount : 0,
+            AvgRepostsPerPost = postCount > 0 ? (double)totals.Reposts / postCount : 0,
+            AvgRepliesPerPost = postCount > 0 ? (double)totals.Replies / postCount : 0,
+            TopEngagers = RankEngagers(tallies, TopEngagerCount)
         };
     }
 
@@ -67,33 +55,41 @@ public class AnalyticsService(ISocialDataRepository repository) : IAnalyticsServ
         int count = 10, string? providerId = null, DateTimeOffset? since = null, CancellationToken ct = default)
     {
         var effectiveSince = since ?? DateTimeOffset.UtcNow.AddDays(-30);
-        var notifications = await repository.GetNotificationsAsync(providerId, since: effectiveSince, ct: ct);
-
-        return notifications
-            .GroupBy(n => n.FromHandle)
-            .Select(g => new TopEngager
-            {
-                Handle = g.Key,
-                InteractionCount = g.Count(),
-                MostCommonInteractionType = g.GroupBy(n => n.Type)
-                    .OrderByDescending(tg => tg.Count())
-                    .First().Key
-            })
-            .OrderByDescending(e => e.InteractionCount)
-            .Take(count)
-            .ToList();
+        var tallies = await repository.GetEngagerTalliesAsync(providerId, effectiveSince, ct);
+        return RankEngagers(tallies, count);
     }
 
     public async Task<IReadOnlyList<EngagementSummary>> GetPlatformComparisonAsync(
         DateTimeOffset? since = null, CancellationToken ct = default)
     {
         var profiles = await repository.GetProfilesAsync(ct);
-        var summaries = new List<EngagementSummary>();
+        var summaries = new List<EngagementSummary>(profiles.Count);
         foreach (var profile in profiles)
         {
-            var summary = await GetEngagementSummaryAsync(profile.ProviderId, since, ct);
-            summaries.Add(summary);
+            summaries.Add(await GetEngagementSummaryAsync(profile.ProviderId, since, ct));
         }
         return summaries;
+    }
+
+    /// <summary>
+    /// Reduces per-(handle, type) tallies to ranked engagers. The input is already aggregated, so
+    /// this runs over distinct engagers rather than raw notifications.
+    /// </summary>
+    private static List<TopEngager> RankEngagers(IReadOnlyList<EngagerTally> tallies, int count)
+    {
+        return [.. tallies
+            .GroupBy(t => t.Handle)
+            .Select(g => new TopEngager
+            {
+                Handle = g.Key,
+                InteractionCount = g.Sum(t => t.Count),
+                MostCommonInteractionType = g
+                    .OrderByDescending(t => t.Count)
+                    .ThenBy(t => t.Type, StringComparer.Ordinal)
+                    .First().Type
+            })
+            .OrderByDescending(e => e.InteractionCount)
+            .ThenBy(e => e.Handle, StringComparer.Ordinal)
+            .Take(count)];
     }
 }

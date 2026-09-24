@@ -2,6 +2,7 @@ using System.Reflection;
 using A2A;
 using A2A.AspNetCore;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Serilog;
 using SocialAgent.Analytics;
 using SocialAgent.Data;
@@ -54,7 +55,7 @@ builder.Services.AddHostedService<SocialMediaPollingService>();
 builder.Services.AddHostedService<DataRetentionService>();
 
 // Authentication (API key required in non-Development environments)
-builder.Services.AddApiKeyAuthentication(builder.Configuration);
+builder.Services.AddApiKeyAuthentication(builder.Configuration, builder.Environment);
 
 // LLM skill routing (optional — falls back to keyword matching if not configured)
 var llmSection = builder.Configuration.GetSection("LLM:Low");
@@ -65,6 +66,10 @@ if (llmSection.Exists() && !string.IsNullOrEmpty(llmSection["ApiKey"]))
         options.Endpoint = llmSection["Endpoint"] ?? string.Empty;
         options.ApiKey = llmSection["ApiKey"] ?? string.Empty;
         options.ModelId = llmSection["ModelId"] ?? string.Empty;
+        if (int.TryParse(llmSection["TimeoutSeconds"], out var timeoutSeconds) && timeoutSeconds > 0)
+        {
+            options.TimeoutSeconds = timeoutSeconds;
+        }
     });
     builder.Services.AddHttpClient<SkillRouter>();
 }
@@ -72,8 +77,10 @@ if (llmSection.Exists() && !string.IsNullOrEmpty(llmSection["ApiKey"]))
 // OpenTelemetry
 builder.Services.AddSocialAgentTelemetry();
 
-// Health checks
-builder.Services.AddHealthChecks();
+// Health checks. "ready" is tagged so the readiness probe exercises the database while the
+// liveness probe stays a pure process check — a database blip should not restart the pod.
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<SocialAgentDbContext>("database", tags: ["ready"]);
 
 var app = builder.Build();
 
@@ -85,7 +92,12 @@ app.UseAuthorization();
 // Build the agent card. The A2A v1.0 spec example shows interface URLs as absolute URLs, so
 // when SocialAgent:PublicBaseUrl is configured we emit absolute URLs there. In dev, where the
 // public base is unknown, we fall back to the relative path "/a2a".
-var agentVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
+var agentVersion = Assembly.GetExecutingAssembly()
+    .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+    // Strip any source-control suffix (e.g. "1.4.0+abc1234") that the SDK appends.
+    .Split('+')[0]
+    ?? Assembly.GetExecutingAssembly().GetName().Version?.ToString()
+    ?? "1.0.0";
 var publicBaseUrl = builder.Configuration["SocialAgent:PublicBaseUrl"]?.TrimEnd('/');
 var a2aInterfaceUrl = string.IsNullOrEmpty(publicBaseUrl) ? "/a2a" : $"{publicBaseUrl}/a2a";
 var agentCard = new AgentCard
@@ -123,8 +135,14 @@ if (requireAuth)
 }
 
 // Health check endpoints (anonymous)
-app.MapHealthChecks("/health/ready");
-app.MapHealthChecks("/health/live");
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready")
+});
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = _ => false
+});
 
 app.Run();
 

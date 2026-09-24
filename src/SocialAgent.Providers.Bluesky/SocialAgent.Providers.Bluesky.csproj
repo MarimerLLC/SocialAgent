@@ -4,6 +4,10 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="Microsoft.Extensions.Http.Resilience" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="SocialAgent.Providers.Bluesky.Tests" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\SocialAgent.Core\SocialAgent.Core.csproj" />

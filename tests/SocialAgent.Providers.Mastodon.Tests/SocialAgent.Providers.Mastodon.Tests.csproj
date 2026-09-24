@@ -11,5 +11,6 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\SocialAgent.Providers.Mastodon\SocialAgent.Providers.Mastodon.csproj" />
+    <ProjectReference Include="..\SocialAgent.TestSupport\SocialAgent.TestSupport.csproj" />
   </ItemGroup>
 </Project>
