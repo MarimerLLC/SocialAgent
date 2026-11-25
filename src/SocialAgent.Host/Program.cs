@@ -110,6 +110,10 @@ var agentCard = new AgentCard
     Skills = [.. SkillCatalog.AgentCardSkills],
     DefaultInputModes = ["text"],
     DefaultOutputModes = ["text"],
+    // Capabilities is required by the A2A 1.0 card schema. Declare it explicitly: SDK 1.0.0-preview4
+    // omits the property when it is left unset, which strict clients reject. Each skill answers
+    // with one synchronous message, so neither streaming nor push notifications is offered.
+    Capabilities = new AgentCapabilities { Streaming = false, PushNotifications = false },
     SupportedInterfaces =
     [
         new AgentInterface { Url = a2aInterfaceUrl, ProtocolBinding = "JSONRPC", ProtocolVersion = "1.0" },

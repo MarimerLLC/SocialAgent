@@ -4,6 +4,27 @@ All notable changes to SocialAgent are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.5.3] - 2026-11-25
+
+### Changed
+- **A2A SDK 1.0.0-preview2 → 1.0.0-preview4** and **Microsoft Agent Framework A2A hosting
+  1.3.0-preview → 1.28.0-preview** (Agent Framework 1.28 itself requires A2A preview4). No code
+  changes were needed. Wire behaviour was compared against 1.5.2 by sending the same `SendMessage`
+  requests to a local host built from each version: JSON-RPC responses are unchanged. Two
+  differences are visible to clients:
+  - HTTP+JSON binding responses (`/a2a/message:send` etc.) are now `application/a2a+json`, the
+    A2A 1.0 media type, instead of `application/json`. The JSON-RPC binding (`POST /a2a`, which
+    RockBot uses) still answers `application/json`.
+  - The agent card now carries `ETag` and `Cache-Control: public, max-age=3600` headers.
+- Patch updates on the .NET 10 line: EF Core, Microsoft.Extensions.* and health checks 10.0.15,
+  Npgsql EF and Npgsql.OpenTelemetry 10.0.4, Http.Resilience 10.11.1, OpenTelemetry 1.21.0,
+  Microsoft.NET.Test.Sdk 18.12.0, MSTest 4.5.3. The 11.0 packages (EF Core 11, Npgsql EF 11) target
+  `net11.0` only, so they wait until the project moves off .NET 10 LTS.
+
+### Fixed
+- The agent card always declares `capabilities` (`streaming: false`, `pushNotifications: false`).
+  The A2A 1.0 card schema requires the property, and SDK preview4 omits it when it is unset.
+
 ## [1.5.2] - 2026-09-22
 
 ### Fixed
