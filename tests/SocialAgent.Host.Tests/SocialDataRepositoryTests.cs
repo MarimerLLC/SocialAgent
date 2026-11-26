@@ -152,6 +152,25 @@ public class SocialDataRepositoryTests
     }
 
     [TestMethod]
+    public async Task GetStoredProviderIds_ListsProvidersWithPostsOrNotifications_Once()
+    {
+        var repository = new SocialDataRepository(_db);
+        Assert.AreEqual(0, (await repository.GetStoredProviderIdsAsync()).Count);
+
+        await repository.UpsertPostsAsync([Post("1", 0), Post("2", 0)]);   // mastodon
+        var bluesky = Notification("n1", Day1);
+        bluesky.Id = "bluesky:n1";
+        bluesky.ProviderId = "bluesky";
+        await repository.UpsertNotificationsAsync([bluesky, Notification("n2", Day2)]);   // bluesky, mastodon
+        // A profile alone doesn't count: profiles are never purged.
+        await repository.UpsertProfileAsync(new SocialProfile { ProviderId = "threads", Handle = "me" });
+
+        var stored = await repository.GetStoredProviderIdsAsync();
+
+        CollectionAssert.AreEquivalent(new[] { "mastodon", "bluesky" }, stored.ToArray());
+    }
+
+    [TestMethod]
     public async Task DateTimeOffset_KeepsItsInstant_AndReadsBackAsUtc()
     {
         var repository = new SocialDataRepository(_db);

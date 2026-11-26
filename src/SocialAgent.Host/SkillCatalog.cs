@@ -11,7 +11,8 @@ internal static class SkillCatalog
     private const string ProviderIdParameter =
         "providerId (string; one provider, case-insensitive, e.g. \"mastodon\" or \"bluesky\". " +
         "Omit it, or pass \"all\", to cover every provider in a single call; there is no need to query providers one at a time. " +
-        "An unknown value returns an error listing the valid ones)";
+        "A list naming every provider, as a comma-separated string or a JSON array, also means all of them. " +
+        "An unknown value returns a JSON object {\"error\": ..., \"validProviderIds\": [...]} instead of data)";
 
     // The skills whose handlers filter by provider. platform-comparison is all-platforms by design,
     // and provider-status reports every provider, so neither takes providerId.

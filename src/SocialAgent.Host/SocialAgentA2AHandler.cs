@@ -12,7 +12,7 @@ internal sealed class SocialAgentA2AHandler(SkillDispatcher dispatcher, ILogger<
 
         var userText = context.UserText ?? string.Empty;
         var explicitSkillId = ReadSkillIdFromMetadata(context);
-        var parameters = context.Message?.Metadata;
+        var parameters = MergeParameters(context.Message?.Metadata, context.Metadata);
 
         string responseText;
         try
@@ -49,6 +49,31 @@ internal sealed class SocialAgentA2AHandler(SkillDispatcher dispatcher, ILogger<
             ?? ReadString(context.Message?.Metadata, "skillId")
             ?? ReadString(context.Metadata, "skill")
             ?? ReadString(context.Metadata, "skillId");
+    }
+
+    // Skill parameters (providerId, count, since) are read from the same two places as the skill
+    // id: the message metadata and the request envelope metadata. A key on the message wins, as it
+    // does for the skill id. Reading only the message used to drop envelope parameters silently,
+    // which widened providerId to every provider.
+    internal static IReadOnlyDictionary<string, JsonElement>? MergeParameters(
+        Dictionary<string, JsonElement>? messageMetadata,
+        Dictionary<string, JsonElement>? requestMetadata)
+    {
+        if (requestMetadata is null || requestMetadata.Count == 0)
+        {
+            return messageMetadata;
+        }
+        if (messageMetadata is null || messageMetadata.Count == 0)
+        {
+            return requestMetadata;
+        }
+
+        var merged = new Dictionary<string, JsonElement>(requestMetadata);
+        foreach (var (key, value) in messageMetadata)
+        {
+            merged[key] = value;
+        }
+        return merged;
     }
 
     private static string? ReadString(Dictionary<string, JsonElement>? metadata, string key)

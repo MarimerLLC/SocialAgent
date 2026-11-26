@@ -87,6 +87,53 @@ public class ProviderSelectionTests
     }
 
     [TestMethod]
+    [DataRow("all,twiter", "twiter")]
+    [DataRow("mastodon,blusky,*", "blusky")]
+    [DataRow("*,Mastodn", "Mastodn")]
+    public void Typo_NextToAll_IsStillAnError(string requested, string unknown)
+    {
+        var result = ProviderSelection.Resolve(requested, Production);
+
+        Assert.IsFalse(result.IsValid, "'all' must not hide an invalid id beside it");
+        StringAssert.Contains(result.Error, $"Unknown providerId '{unknown}'");
+    }
+
+    [TestMethod]
+    public void KnownProviderIds_AddsProvidersWithStoredRows_AfterTheEnabledOnes()
+    {
+        var known = ProviderSelection.KnownProviderIds(["mastodon", "bluesky"], ["threads", "bluesky", "aardvark"]);
+
+        CollectionAssert.AreEqual(new[] { "mastodon", "bluesky", "aardvark", "threads" }, known.ToArray());
+    }
+
+    [TestMethod]
+    public void DisabledProviderWithStoredRows_CanStillBeQueried()
+    {
+        // Threads was enabled once and its history is still stored, but it is disabled now.
+        var known = ProviderSelection.KnownProviderIds(Production, ["mastodon", "threads"]);
+
+        var result = ProviderSelection.Resolve("Threads", known);
+
+        Assert.IsTrue(result.IsValid);
+        Assert.AreEqual("threads", result.Filter);
+    }
+
+    [TestMethod]
+    public void ListOfTheEnabledProviders_IsNotWidened_WhenAnotherProviderHasStoredRows()
+    {
+        // A null filter would return the stored Threads rows too, which the caller left out.
+        var known = ProviderSelection.KnownProviderIds(Production, ["threads"]);
+
+        var named = ProviderSelection.Resolve("mastodon,bluesky", known);
+        Assert.IsFalse(named.IsValid, "the repository cannot filter to a subset, so this must not become 'all'");
+        StringAssert.Contains(named.Error, "one provider or all of them");
+
+        var everything = ProviderSelection.Resolve("mastodon,bluesky,threads", known);
+        Assert.IsTrue(everything.IsValid);
+        Assert.IsNull(everything.Filter);
+    }
+
+    [TestMethod]
     public void NoEnabledProviders_RejectsAnId_ButAllowsAll()
     {
         var rejected = ProviderSelection.Resolve("mastodon", []);

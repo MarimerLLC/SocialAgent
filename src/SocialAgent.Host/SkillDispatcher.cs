@@ -46,15 +46,21 @@ internal sealed class SkillDispatcher(IServiceScopeFactory scopeFactory, ILogger
         string? provider = null;
         if (SkillCatalog.TakesProviderId(skillId))
         {
-            var enabledProviderIds = scope.ServiceProvider.GetServices<ISocialMediaProvider>()
-                .Select(x => x.ProviderId)
-                .ToList();
-            var selection = ProviderSelection.Resolve(p.ProviderId, enabledProviderIds);
+            // Known ids: the enabled providers, plus any provider that still has stored rows. A
+            // null filter returns every stored row, so it must only stand in for a list that names
+            // all of these.
+            var knownProviderIds = ProviderSelection.KnownProviderIds(
+                scope.ServiceProvider.GetServices<ISocialMediaProvider>().Select(x => x.ProviderId),
+                await scope.ServiceProvider.GetRequiredService<ISocialDataRepository>().GetStoredProviderIdsAsync(ct));
+
+            var selection = p.TryGetProviderId(out var requested, out var shapeError)
+                ? ProviderSelection.Resolve(requested, knownProviderIds)
+                : ProviderSelectionResult.Invalid(shapeError!);
             if (!selection.IsValid)
             {
                 logger.LogInformation("Rejected skill {SkillId} ({RoutedFrom}) parameters={Parameters}: {Error}",
                     skillId, routedFrom, parameterSummary, selection.Error);
-                return selection.Error!;
+                return FormatError(selection.Error!, knownProviderIds);
             }
             provider = selection.Filter;
         }
@@ -76,7 +82,7 @@ internal sealed class SkillDispatcher(IServiceScopeFactory scopeFactory, ILogger
     }
 
     // `provider` is the resolved filter from ProviderSelection: null for every provider, or one
-    // canonical provider id. Handlers never read the raw p.ProviderId.
+    // canonical provider id. Handlers never see the raw providerId.
 
     private static async Task<string> HandleEngagementSummaryAsync(IServiceProvider sp, string? provider, SkillParameters p, CancellationToken ct)
     {
@@ -139,6 +145,19 @@ internal sealed class SkillDispatcher(IServiceScopeFactory scopeFactory, ILogger
 
     private static string FormatJson(object data) => JsonSerializer.Serialize(data, JsonPretty);
 
+    // A rejected request answers with a JSON object carrying an "error" key, so a caller can tell
+    // it from skill output (always a JSON array or object of data) without parsing English. The
+    // relaxed encoder keeps the message readable ('x' rather than 'x'); the reply is
+    // an A2A text part, never HTML.
+    private static readonly JsonSerializerOptions ErrorJson = new()
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
+    internal static string FormatError(string error, IReadOnlyList<string> validProviderIds) =>
+        JsonSerializer.Serialize(new { error, validProviderIds }, ErrorJson);
+
     // Compact summary of incoming metadata for logging — recognized keys only, with skill/skillId
     // dropped because they are already logged separately. Returns "{}" when nothing recognized.
     private static string SummarizeParameters(IReadOnlyDictionary<string, JsonElement>? parameters)
@@ -161,14 +180,40 @@ internal sealed class SkillDispatcher(IServiceScopeFactory scopeFactory, ILogger
         private readonly IReadOnlyDictionary<string, JsonElement>? _values;
         public SkillParameters(IReadOnlyDictionary<string, JsonElement>? values) => _values = values;
 
-        public string? ProviderId => GetString("providerId");
         public int? Count => GetInt("count");
         public DateTimeOffset? Since => GetDateTimeOffset("since");
 
-        private string? GetString(string key)
+        /// <summary>
+        /// Reads providerId. Unlike count and since, a value of the wrong shape is an error rather
+        /// than ignored, because ignoring it widens the query to every provider. Absent or JSON
+        /// null is no filter. A string is used as given, and an array of strings (an easy shape
+        /// for an LLM caller) is joined into the comma-separated form.
+        /// </summary>
+        public bool TryGetProviderId(out string? value, out string? error)
         {
-            if (_values is null || !_values.TryGetValue(key, out var element)) return null;
-            return element.ValueKind == JsonValueKind.String ? element.GetString() : null;
+            value = null;
+            error = null;
+            if (_values is null || !_values.TryGetValue("providerId", out var element)
+                || element.ValueKind is JsonValueKind.Null or JsonValueKind.Undefined)
+            {
+                return true;
+            }
+
+            if (element.ValueKind == JsonValueKind.String)
+            {
+                value = element.GetString();
+                return true;
+            }
+
+            if (element.ValueKind == JsonValueKind.Array
+                && element.EnumerateArray().All(e => e.ValueKind == JsonValueKind.String))
+            {
+                value = string.Join(",", element.EnumerateArray().Select(e => e.GetString()));
+                return true;
+            }
+
+            error = $"providerId must be a string, or an array of strings; got {element.GetRawText()}.";
+            return false;
         }
 
         private int? GetInt(string key)

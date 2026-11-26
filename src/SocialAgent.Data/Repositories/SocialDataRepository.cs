@@ -188,6 +188,15 @@ public class SocialDataRepository(SocialAgentDbContext db) : ISocialDataReposito
         return await db.Profiles.ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<string>> GetStoredProviderIdsAsync(CancellationToken ct = default)
+    {
+        // Profiles are deliberately not consulted: they are never purged, so a provider whose posts
+        // and notifications have all aged out would linger as "stored" forever.
+        return await db.Posts.Select(p => p.ProviderId)
+            .Union(db.Notifications.Select(n => n.ProviderId))
+            .ToListAsync(ct);
+    }
+
     public async Task<PollState?> GetPollStateAsync(string providerId, CancellationToken ct = default)
     {
         return await db.PollStates.FindAsync([providerId], ct);

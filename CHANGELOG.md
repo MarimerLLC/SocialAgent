@@ -12,13 +12,25 @@ adheres to [Semantic Versioning](https://semver.org/).
   the skill answered `[]`, which read as "no mentions". RockBot had concluded from it that combined
   multi-provider requests fail, and was querying one provider at a time.
 
+- Skill parameters (`providerId`, `count`, `since`) sent on the A2A request envelope's metadata
+  were dropped; only the message metadata was read. So an envelope `providerId` silently widened
+  the query to every provider. Both are now read, as the skill id already was, and message keys win.
+
 ### Changed
-- `providerId` is resolved against the enabled providers before any query (`ProviderSelection`):
+- `providerId` is resolved before any query (`ProviderSelection`), against the **known**
+  providers: the enabled ones, plus any provider that still has stored posts or notifications.
+  The second group covers a provider that has been disabled but whose history hasn't aged out.
   - It is matched case-insensitively.
-  - Absent, `all` or `*` means every provider.
-  - A comma-separated list naming every enabled provider means every provider, and a list naming
-    one means that one.
-  - Anything else gets an error reply listing the valid ids, and nothing is queried.
+  - Absent, JSON null, `all` or `*` means every provider.
+  - A comma-separated string, or a JSON array of strings, means every provider when it names all
+    the known ones, and that one provider when it names one. Any other subset is an error, because
+    the repository filters a single provider. So a list naming only the enabled providers is never
+    widened to include a disabled one's stored rows.
+  - Every id in a list is checked, even next to `all`, so a typo is never ignored.
+  - Any other value is rejected, including a number, an object or an array holding non-strings.
+    Nothing is queried. Previously a non-string value was read as absent, meaning every provider.
+- A rejected request answers with a JSON object, `{"error": "...", "validProviderIds": [...]}`, so
+  callers can tell it from skill output without parsing English.
 - The agent card describes `providerId` the same way on every skill that takes it, and says
   directly that one call covers every provider.
 - The dispatch log line records the resolved provider (`provider=all` or `provider=mastodon`).
