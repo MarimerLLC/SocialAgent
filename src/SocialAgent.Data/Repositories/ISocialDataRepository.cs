@@ -57,6 +57,12 @@ public interface ISocialDataRepository
     Task<IReadOnlyList<SocialNotification>> GetNotificationsAsync(string? providerId = null, string? type = null, DateTimeOffset? since = null, int? limit = null, IReadOnlyCollection<string>? types = null, CancellationToken ct = default);
     Task<IReadOnlyList<SocialNotification>> GetUnreadNotificationsAsync(string? providerId = null, CancellationToken ct = default);
 
+    /// <summary>The <paramref name="limit"/> newest unread notifications.</summary>
+    Task<IReadOnlyList<SocialNotification>> GetUnreadNotificationsAsync(string? providerId, int limit, CancellationToken ct = default);
+
+    /// <summary>Counts unread notifications in SQL.</summary>
+    Task<int> CountUnreadNotificationsAsync(string? providerId = null, CancellationToken ct = default);
+
     /// <summary>Counts notifications per type without materialising them.</summary>
     Task<IReadOnlyDictionary<string, int>> GetNotificationCountsByTypeAsync(string? providerId = null, DateTimeOffset? since = null, CancellationToken ct = default);
 

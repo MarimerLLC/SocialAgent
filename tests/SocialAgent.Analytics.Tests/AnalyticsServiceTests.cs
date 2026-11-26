@@ -71,11 +71,11 @@ public class AnalyticsServiceTests
     public async Task GetEngagementSummary_CountsMentionsAndFollows()
     {
         _repository.GetNotificationCountsByTypeAsync(Arg.Any<string?>(), Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>())
-            .Returns(new Dictionary<string, int> { ["mention"] = 4, ["follow"] = 2, ["like"] = 11 });
+            .Returns(new Dictionary<string, int> { ["mention"] = 4, ["reply"] = 3, ["follow"] = 2, ["like"] = 11 });
 
         var summary = await _service.GetEngagementSummaryAsync();
 
-        Assert.AreEqual(4, summary.TotalMentions);
+        Assert.AreEqual(7, summary.TotalMentions, "replies count as mentions");
         Assert.AreEqual(2, summary.NewFollowers);
     }
 

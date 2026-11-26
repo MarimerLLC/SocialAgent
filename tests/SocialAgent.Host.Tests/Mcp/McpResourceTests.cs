@@ -54,6 +54,7 @@ public sealed class McpResourceTests
             Assert.AreEqual(16, doc.GetProperty("marker").GetString()!.Length);
         }
         Assert.AreEqual(2, providers.GetProperty("providers").GetArrayLength());
+        Assert.IsTrue(providers.GetProperty("providers")[0].GetProperty("lastPollSucceeded").GetBoolean(), "the poll's outcome, not a live check");
         Assert.AreEqual("all", mentions.GetProperty("providerId").GetString());
         Assert.AreEqual("r1", mentions.GetProperty("mentions").EnumerateArray().Single().GetProperty("platformNotificationId").GetString());
         Assert.AreEqual("bluesky", bluesky.GetProperty("providerId").GetString(), "the provider is resolved case-insensitively");

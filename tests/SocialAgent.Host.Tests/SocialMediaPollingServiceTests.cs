@@ -68,7 +68,7 @@ public class SocialMediaPollingServiceTests
             services.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<SocialMediaPollingService>.Instance,
             FastPolling(),
-            new SocialChanges());
+            new SocialChanges(), new ProviderPollOutcomes());
 
         using var cts = new CancellationTokenSource();
         await service.StartAsync(cts.Token);
@@ -94,7 +94,7 @@ public class SocialMediaPollingServiceTests
             services.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<SocialMediaPollingService>.Instance,
             FastPolling(),
-            new SocialChanges());
+            new SocialChanges(), new ProviderPollOutcomes());
 
         using var cts = new CancellationTokenSource();
         await service.StartAsync(cts.Token);
@@ -114,7 +114,7 @@ public class SocialMediaPollingServiceTests
             services.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<SocialMediaPollingService>.Instance,
             FastPolling(),
-            new SocialChanges());
+            new SocialChanges(), new ProviderPollOutcomes());
 
         await service.StartAsync(CancellationToken.None);
         await service.StopAsync(CancellationToken.None);
@@ -149,7 +149,7 @@ public class SocialMediaPollingServiceTests
         var published = new List<SocialChange>();
         changes.Subscribe(published.Add);
         var service = new SocialMediaPollingService(
-            sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<SocialMediaPollingService>.Instance, FastPolling(), changes);
+            sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<SocialMediaPollingService>.Instance, FastPolling(), changes, new ProviderPollOutcomes());
         return (service, published, sp);
     }
 
@@ -287,7 +287,7 @@ public class SocialMediaPollingServiceTests
             sp.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<SocialMediaPollingService>.Instance,
             FastPolling(),
-            new SocialChanges());
+            new SocialChanges(), new ProviderPollOutcomes());
         await service.StartAsync(CancellationToken.None);
         await Task.Delay(TimeSpan.FromSeconds(13), CancellationToken.None);
         await service.StopAsync(CancellationToken.None);

@@ -1,9 +1,14 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
-using SocialAgent.Core.Models;
+using SocialAgent.Core.Providers;
 using SocialAgent.Data.Repositories;
+using SocialAgent.Host.Services;
 
 namespace SocialAgent.Host.Mcp;
+
+/// <summary>A provider in <c>social://providers</c>: its last poll's outcome and time, null before the first poll.</summary>
+internal sealed record ProviderPollStatus(string ProviderId, string ProviderName, bool? LastPollSucceeded, DateTimeOffset? LastPolledAt);
 
 /// <summary>A resource as read now: its JSON, the marker inside it, and the resolved URI.</summary>
 internal sealed record ResourceSnapshot(string Json, string Marker, SocialResourceUri Resolved);
@@ -22,6 +27,9 @@ internal static class SocialResourceReader
     /// <summary>How many of the newest mentions and replies a mentions resource lists.</summary>
     public const int MentionLimit = 50;
 
+    /// <summary>How many of the newest unread notifications the unread resource lists.</summary>
+    public const int UnreadLimit = 50;
+
     public static async Task<ResourceRead> ReadAsync(SocialResourceUri resource, IServiceProvider services, CancellationToken ct)
     {
         var queries = services.GetRequiredService<SocialQueries>();
@@ -29,8 +37,15 @@ internal static class SocialResourceReader
         {
             case SocialResourceKind.Providers:
             {
-                var providers = await queries.GetProviderStatusesAsync(ct);
-                var marker = Marker(providers.Select(p => $"{p.ProviderId}:{p.Connected}"));
+                // The polling loop's outcomes, not a live check, so the content moves exactly when the
+                // loop announces a provider started or stopped failing.
+                var outcomes = services.GetRequiredService<ProviderPollOutcomes>();
+                var providers = services.GetServices<ISocialMediaProvider>()
+                    .Select(p => (Provider: p, Outcome: outcomes.Get(p.ProviderId)))
+                    .Select(x => new ProviderPollStatus(x.Provider.ProviderId, x.Provider.ProviderName,
+                        x.Outcome?.Succeeded, x.Outcome?.At))
+                    .ToList();
+                var marker = Marker(providers.Select(p => $"{p.ProviderId}:{p.LastPollSucceeded}"));
                 return Snapshot(resource, marker, new { marker, providers });
             }
 
@@ -49,9 +64,12 @@ internal static class SocialResourceReader
 
             case SocialResourceKind.Unread:
             {
-                var notifications = await queries.GetUnreadNotificationsAsync(provider: null, ct);
-                var marker = Marker(notifications.Select(n => n.Id));
-                return Snapshot(resource, marker, new { marker, count = notifications.Count, notifications });
+                // Capped like mentions: Threads notifications are never read, so the set only grows.
+                var repository = services.GetRequiredService<ISocialDataRepository>();
+                var count = await repository.CountUnreadNotificationsAsync(providerId: null, ct);
+                var notifications = await repository.GetUnreadNotificationsAsync(providerId: null, UnreadLimit, ct);
+                var marker = Marker(notifications.Select(n => n.Id).Prepend(count.ToString(CultureInfo.InvariantCulture)));
+                return Snapshot(resource, marker, new { marker, count, notifications });
             }
 
             case SocialResourceKind.Post:

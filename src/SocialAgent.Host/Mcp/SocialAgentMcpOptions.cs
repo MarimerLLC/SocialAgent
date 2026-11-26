@@ -9,7 +9,7 @@ internal static class SocialAgentMcpOptions
 {
     private const string Instructions = """
         SocialAgent monitors the user's social media accounts (Mastodon, Bluesky, Threads) and answers
-        from what it has stored. It polls each platform every 5 minutes; it never posts, replies or likes.
+        from what it has stored. It polls each platform on a fixed interval; it never posts, replies or likes.
 
         Tools: get_engagement_summary, get_top_posts, get_recent_mentions, get_follower_insights,
         compare_platforms, get_unread_notifications and get_provider_status. Every tool that takes

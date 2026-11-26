@@ -29,7 +29,8 @@ public class AnalyticsService(ISocialDataRepository repository) : IAnalyticsServ
             TotalLikes = totals.Likes,
             TotalReposts = totals.Reposts,
             TotalReplies = totals.Replies,
-            TotalMentions = typeCounts.GetValueOrDefault("mention"),
+            // Mentions include replies, as everywhere else (NotificationTypes.Mentions).
+            TotalMentions = NotificationTypes.Mentions.Sum(type => typeCounts.GetValueOrDefault(type)),
             NewFollowers = typeCounts.GetValueOrDefault("follow"),
             AvgLikesPerPost = postCount > 0 ? (double)totals.Likes / postCount : 0,
             AvgRepostsPerPost = postCount > 0 ? (double)totals.Reposts / postCount : 0,

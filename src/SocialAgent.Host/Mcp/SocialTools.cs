@@ -150,7 +150,7 @@ internal sealed class SocialTools(SocialQueries queries)
 
     [McpServerTool(Name = "get_unread_notifications", Title = "Unread notifications", ReadOnly = true, Idempotent = true, OpenWorld = false, Destructive = false,
         UseStructuredContent = true, OutputSchemaType = typeof(UnreadNotificationsResult))]
-    [Description("Every unread notification (likes, reposts, follows, mentions, replies), newest first. Read state comes from the platform (Threads has none, so its notifications stay unread). Watch social://notifications/unread to hear when this changes." + DataNotice)]
+    [Description("Every unread notification (likes, reposts, follows, mentions, replies), newest first. Read state comes from the platform when a poll fetches the notification, and is not refreshed later, so one read on the platform afterwards may still show here (Threads has no read state at all). Watch social://notifications/unread to hear when new ones arrive." + DataNotice)]
     public async Task<CallToolResult> GetUnreadNotifications(
         [Description(ProviderIdDescription)] string? providerId = null,
         CancellationToken cancellationToken = default)

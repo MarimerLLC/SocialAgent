@@ -35,6 +35,7 @@ builder.Services.AddSingleton<SkillDispatcher>();
 builder.Services.AddScoped<SocialQueries>();
 // What the polling loop saved, for MCP listen streams. In-process, so one replica only.
 builder.Services.AddSingleton<ISocialChanges, SocialChanges>();
+builder.Services.AddSingleton<ProviderPollOutcomes>();
 builder.Services.AddKeyedSingleton<IAgentHandler, SocialAgentA2AHandler>(SocialAgentStubAgent.AgentName);
 builder.AddA2AServer(SocialAgentStubAgent.AgentName);
 

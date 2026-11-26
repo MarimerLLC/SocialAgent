@@ -148,6 +148,21 @@ public class SocialDataRepository(SocialAgentDbContext db) : ISocialDataReposito
         return await query.OrderByDescending(n => n.CreatedAt).ToListAsync(ct);
     }
 
+    public async Task<IReadOnlyList<SocialNotification>> GetUnreadNotificationsAsync(
+        string? providerId, int limit, CancellationToken ct = default)
+    {
+        var query = db.Notifications.Where(n => !n.IsRead);
+        if (providerId is not null) query = query.Where(n => n.ProviderId == providerId);
+        return await query.OrderByDescending(n => n.CreatedAt).Take(limit).ToListAsync(ct);
+    }
+
+    public async Task<int> CountUnreadNotificationsAsync(string? providerId = null, CancellationToken ct = default)
+    {
+        var query = db.Notifications.Where(n => !n.IsRead);
+        if (providerId is not null) query = query.Where(n => n.ProviderId == providerId);
+        return await query.CountAsync(ct);
+    }
+
     public async Task<PostEngagementTotals> GetPostEngagementTotalsAsync(
         string? providerId = null, DateTimeOffset? since = null, CancellationToken ct = default)
     {

@@ -8,12 +8,9 @@ internal class SocialMediaPollingService(
     IServiceScopeFactory scopeFactory,
     ILogger<SocialMediaPollingService> logger,
     IConfiguration configuration,
-    ISocialChanges changes) : BackgroundService
+    ISocialChanges changes,
+    ProviderPollOutcomes outcomes) : BackgroundService
 {
-    // Each provider's last poll outcome, so a flip between working and failing can be announced.
-    private readonly Dictionary<string, bool> _lastPollSucceeded = new(StringComparer.Ordinal);
-    private readonly Lock _outcomeLock = new();
-
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var intervalMinutes = configuration.GetValue("SocialAgent:PollingIntervalMinutes", 5);
@@ -69,21 +66,11 @@ internal class SocialMediaPollingService(
                 logger.LogError(ex, "Error polling provider {ProviderId}", provider.ProviderId);
                 succeeded = false;
             }
-            RecordOutcome(provider.ProviderId, succeeded);
-        }
-    }
-
-    private void RecordOutcome(string providerId, bool succeeded)
-    {
-        bool flipped;
-        lock (_outcomeLock)
-        {
-            flipped = _lastPollSucceeded.TryGetValue(providerId, out var previous) && previous != succeeded;
-            _lastPollSucceeded[providerId] = succeeded;
-        }
-        if (flipped)
-        {
-            changes.Publish(new SocialChange(SocialChangeKind.Providers, providerId));
+            // A flip between working and failing is announced; social://providers reports these outcomes.
+            if (outcomes.Record(provider.ProviderId, succeeded, DateTimeOffset.UtcNow))
+            {
+                changes.Publish(new SocialChange(SocialChangeKind.Providers, provider.ProviderId));
+            }
         }
     }
 
