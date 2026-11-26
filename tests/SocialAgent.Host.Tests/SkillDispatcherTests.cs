@@ -93,10 +93,15 @@ public class SkillDispatcherTests
             .Returns([]);
         _repository.GetUnreadNotificationsAsync(Arg.Any<string?>(), Arg.Any<CancellationToken>())
             .Returns([]);
+        _repository.GetStoredProviderIdsAsync(Arg.Any<CancellationToken>())
+            .Returns(["mastodon", "bluesky"]);
 
         var services = new ServiceCollection();
         services.AddSingleton(_analytics);
         services.AddSingleton(_repository);
+        // The enabled providers, as in production: providerId is resolved against these.
+        services.AddSingleton(StubProvider("mastodon", "Mastodon"));
+        services.AddSingleton(StubProvider("bluesky", "Bluesky"));
         _services = services.BuildServiceProvider();
 
         _dispatcher = new SkillDispatcher(
@@ -109,6 +114,135 @@ public class SkillDispatcherTests
 
     private static Dictionary<string, JsonElement> Metadata(string json) =>
         JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)!;
+
+    private static ISocialMediaProvider StubProvider(string id, string name)
+    {
+        var provider = Substitute.For<ISocialMediaProvider>();
+        provider.ProviderId.Returns(id);
+        provider.ProviderName.Returns(name);
+        return provider;
+    }
+
+    [TestMethod]
+    public async Task ProviderId_IsMatchedCaseInsensitively_BeforeQuerying()
+    {
+        await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":"Mastodon"}"""), CancellationToken.None);
+
+        await _analytics.Received(1).GetRecentMentionsAsync(20, "mastodon", Arg.Any<CancellationToken>());
+    }
+
+    [TestMethod]
+    public async Task ProviderIdListNamingEveryProvider_QueriesTheUnion()
+    {
+        // The combined request RockBot learned to avoid: it used to match nothing and return [].
+        await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":"mastodon,bluesky"}"""), CancellationToken.None);
+
+        await _analytics.Received(1).GetRecentMentionsAsync(20, null, Arg.Any<CancellationToken>());
+    }
+
+    [TestMethod]
+    public async Task ProviderIdAll_QueriesTheUnion()
+    {
+        await _dispatcher.DispatchAsync("engagement-summary", string.Empty, Metadata("""{"providerId":"all"}"""), CancellationToken.None);
+
+        await _analytics.Received(1).GetEngagementSummaryAsync(null, Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>());
+    }
+
+    // A rejected request answers {"error": ..., "validProviderIds": [...]}, never data.
+    private static (string Error, string[] ValidProviderIds) ParseError(string reply)
+    {
+        using var json = JsonDocument.Parse(reply);
+        Assert.AreEqual(JsonValueKind.Object, json.RootElement.ValueKind, $"expected an error object, got: {reply}");
+        return (json.RootElement.GetProperty("error").GetString()!,
+            json.RootElement.GetProperty("validProviderIds").EnumerateArray().Select(e => e.GetString()!).ToArray());
+    }
+
+    [TestMethod]
+    public async Task UnknownProviderId_ReturnsAJsonError_WithoutQuerying()
+    {
+        var mentions = await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":"twitter"}"""), CancellationToken.None);
+
+        var (error, valid) = ParseError(mentions);
+        StringAssert.Contains(error, "Unknown providerId 'twitter'", "the message stays readable, not \\u0027-escaped");
+        CollectionAssert.AreEqual(new[] { "mastodon", "bluesky" }, valid);
+        await _analytics.DidNotReceiveWithAnyArgs().GetRecentMentionsAsync(default, default, default);
+
+        // check-notifications goes to the repository rather than analytics; it is guarded too.
+        var unread = await _dispatcher.DispatchAsync("check-notifications", string.Empty, Metadata("""{"providerId":"twitter"}"""), CancellationToken.None);
+
+        StringAssert.Contains(ParseError(unread).Error, "Unknown providerId 'twitter'");
+        await _repository.DidNotReceiveWithAnyArgs().GetUnreadNotificationsAsync(default, default);
+    }
+
+    [TestMethod]
+    [DataRow("""{"providerId":42}""")]
+    [DataRow("""{"providerId":true}""")]
+    [DataRow("""{"providerId":{"id":"mastodon"}}""")]
+    [DataRow("""{"providerId":["mastodon",7]}""")]
+    public async Task NonStringProviderId_IsAnError_NotAWiderQuery(string metadata)
+    {
+        // Reading these as absent would silently query every provider.
+        var result = await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata(metadata), CancellationToken.None);
+
+        StringAssert.Contains(ParseError(result).Error, "providerId must be a string");
+        await _analytics.DidNotReceiveWithAnyArgs().GetRecentMentionsAsync(default, default, default);
+    }
+
+    [TestMethod]
+    public async Task ProviderIdArrayOfStrings_IsAccepted()
+    {
+        await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":["Bluesky"]}"""), CancellationToken.None);
+        await _analytics.Received(1).GetRecentMentionsAsync(20, "bluesky", Arg.Any<CancellationToken>());
+
+        await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":["mastodon","bluesky"]}"""), CancellationToken.None);
+        await _analytics.Received(1).GetRecentMentionsAsync(20, null, Arg.Any<CancellationToken>());
+    }
+
+    [TestMethod]
+    public async Task NullProviderId_MeansEveryProvider()
+    {
+        await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":null}"""), CancellationToken.None);
+
+        await _analytics.Received(1).GetRecentMentionsAsync(20, null, Arg.Any<CancellationToken>());
+    }
+
+    [TestMethod]
+    public async Task DisabledProviderWithStoredHistory_IsQueryable_AndNotSwallowedByAList()
+    {
+        // Threads is not enabled, but its rows are still stored.
+        _repository.GetStoredProviderIdsAsync(Arg.Any<CancellationToken>()).Returns(["mastodon", "bluesky", "threads"]);
+
+        await _dispatcher.DispatchAsync("engagement-summary", string.Empty, Metadata("""{"providerId":"threads"}"""), CancellationToken.None);
+        await _analytics.Received(1).GetEngagementSummaryAsync("threads", Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>());
+
+        // Naming only the enabled two must not widen to null, which would include Threads.
+        var subset = await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":"mastodon,bluesky"}"""), CancellationToken.None);
+        var (error, valid) = ParseError(subset);
+        StringAssert.Contains(error, "one provider or all of them");
+        CollectionAssert.AreEqual(new[] { "mastodon", "bluesky", "threads" }, valid);
+        await _analytics.DidNotReceiveWithAnyArgs().GetRecentMentionsAsync(default, default, default);
+    }
+
+    [TestMethod]
+    public async Task SkillsWithoutProviderId_IgnoreIt()
+    {
+        // platform-comparison is all-platforms by design, so a bogus providerId must not block it.
+        var result = await _dispatcher.DispatchAsync("platform-comparison", string.Empty, Metadata("""{"providerId":"twitter"}"""), CancellationToken.None);
+
+        Assert.IsFalse(result.Contains("Unknown providerId", StringComparison.Ordinal));
+        await _analytics.Received(1).GetPlatformComparisonAsync(Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>());
+    }
+
+    [TestMethod]
+    public void AgentCard_DescribesProviderIdForEverySkillThatTakesIt()
+    {
+        foreach (var skill in SkillCatalog.AgentCardSkills)
+        {
+            var mentionsProviderId = skill.Description.Contains("providerId (string; one provider", StringComparison.Ordinal);
+            Assert.AreEqual(SkillCatalog.TakesProviderId(skill.Id), mentionsProviderId,
+                $"{skill.Id}: the card must describe providerId exactly when the skill filters by it");
+        }
+    }
 
     [TestMethod]
     public async Task ExplicitSkillId_TakesPrecedenceOverText()
@@ -163,12 +297,14 @@ public class SkillDispatcherTests
     [TestMethod]
     public async Task MalformedParameters_AreIgnored_RatherThanThrowing()
     {
-        var metadata = Metadata("""{"count":"not-a-number","since":"never","providerId":42}""");
+        // count and since fall back to their defaults. providerId is the exception: a malformed one
+        // is an error (see NonStringProviderId_IsAnError_NotAWiderQuery), because ignoring it
+        // would widen the query to every provider.
+        var metadata = Metadata("""{"count":"not-a-number","since":"never"}""");
 
         var result = await _dispatcher.DispatchAsync("top-posts", string.Empty, metadata, CancellationToken.None);
 
         Assert.IsNotNull(result);
-        // Defaults survive: count falls back to 10, providerId and since to null.
         await _analytics.Received(1).GetTopPostsAsync(10, null, null, Arg.Any<CancellationToken>());
     }
 

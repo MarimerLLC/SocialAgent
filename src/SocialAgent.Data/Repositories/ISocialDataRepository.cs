@@ -40,6 +40,12 @@ public interface ISocialDataRepository
     Task UpsertProfileAsync(SocialProfile profile, CancellationToken ct = default);
     Task<IReadOnlyList<SocialProfile>> GetProfilesAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// The distinct provider ids that have stored posts or notifications, including providers
+    /// that are no longer enabled but whose history has not yet aged out.
+    /// </summary>
+    Task<IReadOnlyList<string>> GetStoredProviderIdsAsync(CancellationToken ct = default);
+
     // Poll State
     Task<PollState?> GetPollStateAsync(string providerId, CancellationToken ct = default);
     Task UpsertPollStateAsync(PollState state, CancellationToken ct = default);

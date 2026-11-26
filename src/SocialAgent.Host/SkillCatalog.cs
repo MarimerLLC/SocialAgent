@@ -5,6 +5,28 @@ namespace SocialAgent.Host;
 
 internal static class SkillCatalog
 {
+    // How every skill that filters by provider describes the parameter. Callers read this from the
+    // agent card, so it says plainly that one call covers every provider: RockBot had concluded
+    // that combined requests fail and was querying one provider at a time (#9).
+    private const string ProviderIdParameter =
+        "providerId (string; one provider, case-insensitive, e.g. \"mastodon\" or \"bluesky\". " +
+        "Omit it, or pass \"all\", to cover every provider in a single call; there is no need to query providers one at a time. " +
+        "A list naming every provider, as a comma-separated string or a JSON array, also means all of them. " +
+        "An unknown value returns a JSON object {\"error\": ..., \"validProviderIds\": [...]} instead of data)";
+
+    // The skills whose handlers filter by provider. platform-comparison is all-platforms by design,
+    // and provider-status reports every provider, so neither takes providerId.
+    private static readonly HashSet<string> ProviderFilteredSkillIds = new(StringComparer.Ordinal)
+    {
+        "engagement-summary",
+        "top-posts",
+        "recent-mentions",
+        "follower-insights",
+        "check-notifications"
+    };
+
+    public static bool TakesProviderId(string skillId) => ProviderFilteredSkillIds.Contains(skillId);
+
     // Skill parameters arrive as flat keys on message.metadata, alongside metadata.skill. Parameter
     // keys are documented per-skill below. Unknown keys are ignored. Parameter values may be JSON
     // strings, numbers, or ISO-8601 timestamps as appropriate; the dispatcher coerces strings to
@@ -16,7 +38,7 @@ internal static class SkillCatalog
             Id = "engagement-summary",
             Name = "Engagement Summary",
             Description = "Get a summary of recent engagement. Returns total likes, reposts, replies, mentions, new followers, and averages per post. " +
-                "Optional metadata parameters: providerId (string, e.g. \"mastodon\" or \"bluesky\"; default: union across all providers), since (ISO-8601 timestamp; default: last 7 days).",
+                "Optional metadata parameters: " + ProviderIdParameter + ", since (ISO-8601 timestamp; default: last 7 days).",
             Tags = ["social", "analytics", "engagement"]
         },
         new()
@@ -24,7 +46,7 @@ internal static class SkillCatalog
             Id = "top-posts",
             Name = "Top Posts",
             Description = "Get your most-engaged posts ranked by total engagement (likes + reposts + replies). " +
-                "Optional metadata parameters: providerId (string), count (integer, default 10), since (ISO-8601 timestamp).",
+                "Optional metadata parameters: " + ProviderIdParameter + ", count (integer, default 10), since (ISO-8601 timestamp).",
             Tags = ["social", "analytics", "posts"]
         },
         new()
@@ -32,7 +54,7 @@ internal static class SkillCatalog
             Id = "recent-mentions",
             Name = "Recent Mentions",
             Description = "Get recent mentions and replies. " +
-                "Optional metadata parameters: providerId (string; default: union), count (integer, default 20).",
+                "Optional metadata parameters: " + ProviderIdParameter + ", count (integer, default 20).",
             Tags = ["social", "mentions", "notifications"]
         },
         new()
@@ -40,7 +62,7 @@ internal static class SkillCatalog
             Id = "follower-insights",
             Name = "Follower Insights",
             Description = "See who engages most with your content and their interaction patterns. " +
-                "Optional metadata parameters: providerId (string), count (integer, default 10), since (ISO-8601 timestamp).",
+                "Optional metadata parameters: " + ProviderIdParameter + ", count (integer, default 10), since (ISO-8601 timestamp).",
             Tags = ["social", "analytics", "followers"]
         },
         new()
@@ -56,7 +78,7 @@ internal static class SkillCatalog
             Id = "check-notifications",
             Name = "Check Notifications",
             Description = "Get unread notifications. " +
-                "Optional metadata parameters: providerId (string; default: union).",
+                "Optional metadata parameters: " + ProviderIdParameter + ".",
             Tags = ["social", "notifications"]
         },
         new()
