@@ -53,8 +53,9 @@ internal static class SkillCatalog
         {
             Id = "recent-mentions",
             Name = "Recent Mentions",
-            Description = "Get recent mentions and replies. " +
-                "Optional metadata parameters: " + ProviderIdParameter + ", count (integer, default 20).",
+            Description = "Get recent mentions and replies, newest first. " +
+                "Optional metadata parameters: " + ProviderIdParameter + ", count (integer, default 20), " +
+                "since (ISO-8601 timestamp; only mentions and replies at or after it; default: no limit).",
             Tags = ["social", "mentions", "notifications"]
         },
         new()

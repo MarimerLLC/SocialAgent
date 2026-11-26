@@ -75,6 +75,26 @@ public class MastodonProviderTests
     }
 
     [TestMethod]
+    public async Task GetNotifications_CarryTheStatusUrl()
+    {
+        const string notificationsJson = """
+            [{"id":"9","type":"mention","created_at":"2026-11-25T10:00:00Z","account":{"id":"1","acct":"alice@x.test"},
+              "status":{"id":"77","content":"<p>hi</p>","url":"https://x.test/@alice/77","created_at":"2026-11-25T10:00:00Z"}},
+             {"id":"8","type":"follow","created_at":"2026-11-25T09:00:00Z","account":{"id":"2","acct":"bob@x.test"}}]
+            """;
+        var handler = new StubHttpMessageHandler((request, _) =>
+            request.RequestUri!.AbsolutePath.Contains("markers")
+                ? StubHttpMessageHandler.Json(HttpStatusCode.OK, "{}")
+                : StubHttpMessageHandler.Json(HttpStatusCode.OK, notificationsJson));
+        var provider = CreateProvider(handler);
+
+        var notifications = await provider.GetNotificationsAsync();
+
+        Assert.AreEqual("https://x.test/@alice/77", notifications.Single(n => n.Type == "mention").Url);
+        Assert.IsNull(notifications.Single(n => n.Type == "follow").Url, "a follow has no post to link to");
+    }
+
+    [TestMethod]
     public async Task GetRecentPosts_StripsHtmlContent()
     {
         var posts = StatusesJson(1, DateTimeOffset.UtcNow, content: "<p>Line one<br>Line two</p>");

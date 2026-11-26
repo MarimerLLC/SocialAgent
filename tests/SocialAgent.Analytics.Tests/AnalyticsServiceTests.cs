@@ -43,6 +43,20 @@ public class AnalyticsServiceTests
     }
 
     [TestMethod]
+    public async Task GetRecentMentions_IncludesReplies_AndPassesSince()
+    {
+        // Bluesky and Threads report a reply as its own type; filtering on "mention" alone hid them.
+        var since = new DateTimeOffset(2026, 11, 20, 0, 0, 0, TimeSpan.Zero);
+
+        await _service.GetRecentMentionsAsync(5, "bluesky", since);
+
+        await _repository.Received(1).GetNotificationsAsync(
+            "bluesky", null, since, 5,
+            Arg.Is<IReadOnlyCollection<string>?>(t => t != null && t.Order().SequenceEqual(new[] { "mention", "reply" })),
+            Arg.Any<CancellationToken>());
+    }
+
+    [TestMethod]
     public async Task GetEngagementSummary_WithNoData_ReturnsZeros()
     {
         var summary = await _service.GetEngagementSummaryAsync();
@@ -57,11 +71,11 @@ public class AnalyticsServiceTests
     public async Task GetEngagementSummary_CountsMentionsAndFollows()
     {
         _repository.GetNotificationCountsByTypeAsync(Arg.Any<string?>(), Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>())
-            .Returns(new Dictionary<string, int> { ["mention"] = 4, ["follow"] = 2, ["like"] = 11 });
+            .Returns(new Dictionary<string, int> { ["mention"] = 4, ["reply"] = 3, ["follow"] = 2, ["like"] = 11 });
 
         var summary = await _service.GetEngagementSummaryAsync();
 
-        Assert.AreEqual(4, summary.TotalMentions);
+        Assert.AreEqual(7, summary.TotalMentions, "replies count as mentions");
         Assert.AreEqual(2, summary.NewFollowers);
     }
 

@@ -11,11 +11,33 @@ public readonly record struct PostEngagementTotals(int PostCount, int Likes, int
 /// <summary>One (handle, interaction type) tally, computed in the database.</summary>
 public readonly record struct EngagerTally(string Handle, string Type, int Count);
 
+/// <summary>What <see cref="ISocialDataRepository.UpsertPostsAsync"/> changed.</summary>
+/// <param name="Inserted">How many posts were new.</param>
+/// <param name="EngagementChanged">Posts already stored whose like, repost or reply count moved.</param>
+public readonly record struct PostUpsertResult(int Inserted, IReadOnlyList<SocialPost> EngagementChanged)
+{
+    // A default value (as from a test double) reads as "nothing changed" rather than null.
+    public IReadOnlyList<SocialPost> EngagementChanged { get => field ?? []; init; } = EngagementChanged;
+}
+
+/// <summary>What <see cref="ISocialDataRepository.UpsertNotificationsAsync"/> changed.</summary>
+/// <param name="Inserted">The notifications that were new, as stored.</param>
+/// <param name="ReadStateChanged">How many stored notifications changed between read and unread.</param>
+public readonly record struct NotificationUpsertResult(IReadOnlyList<SocialNotification> Inserted, int ReadStateChanged)
+{
+    public IReadOnlyList<SocialNotification> Inserted { get => field ?? []; init; } = Inserted;
+
+    public int InsertedCount => Inserted.Count;
+}
+
 public interface ISocialDataRepository
 {
     // Posts
-    /// <summary>Inserts new posts and refreshes engagement on existing ones. Returns the number inserted.</summary>
-    Task<int> UpsertPostsAsync(IEnumerable<SocialPost> posts, CancellationToken ct = default);
+    /// <summary>Inserts new posts and refreshes engagement on existing ones.</summary>
+    Task<PostUpsertResult> UpsertPostsAsync(IEnumerable<SocialPost> posts, CancellationToken ct = default);
+
+    /// <summary>One stored post by its platform id, or null.</summary>
+    Task<SocialPost?> GetPostAsync(string providerId, string platformPostId, CancellationToken ct = default);
     Task<IReadOnlyList<SocialPost>> GetPostsAsync(string? providerId = null, DateTimeOffset? since = null, bool? isOwnPost = null, int? limit = null, CancellationToken ct = default);
     Task<IReadOnlyList<SocialPost>> GetTopPostsByEngagementAsync(int count, string? providerId = null, DateTimeOffset? since = null, CancellationToken ct = default);
 
@@ -23,9 +45,23 @@ public interface ISocialDataRepository
     Task<PostEngagementTotals> GetPostEngagementTotalsAsync(string? providerId = null, DateTimeOffset? since = null, CancellationToken ct = default);
 
     // Notifications
-    Task UpsertNotificationsAsync(IEnumerable<SocialNotification> notifications, CancellationToken ct = default);
-    Task<IReadOnlyList<SocialNotification>> GetNotificationsAsync(string? providerId = null, string? type = null, DateTimeOffset? since = null, int? limit = null, CancellationToken ct = default);
+    /// <summary>
+    /// Inserts new notifications, and refreshes the read state (and a missing <c>Url</c>) of stored ones.
+    /// </summary>
+    Task<NotificationUpsertResult> UpsertNotificationsAsync(IEnumerable<SocialNotification> notifications, CancellationToken ct = default);
+
+    /// <summary>
+    /// Notifications newest first. <paramref name="type"/> and <paramref name="types"/> both filter
+    /// by type; give either.
+    /// </summary>
+    Task<IReadOnlyList<SocialNotification>> GetNotificationsAsync(string? providerId = null, string? type = null, DateTimeOffset? since = null, int? limit = null, IReadOnlyCollection<string>? types = null, CancellationToken ct = default);
     Task<IReadOnlyList<SocialNotification>> GetUnreadNotificationsAsync(string? providerId = null, CancellationToken ct = default);
+
+    /// <summary>The <paramref name="limit"/> newest unread notifications.</summary>
+    Task<IReadOnlyList<SocialNotification>> GetUnreadNotificationsAsync(string? providerId, int limit, CancellationToken ct = default);
+
+    /// <summary>Counts unread notifications in SQL.</summary>
+    Task<int> CountUnreadNotificationsAsync(string? providerId = null, CancellationToken ct = default);
 
     /// <summary>Counts notifications per type without materialising them.</summary>
     Task<IReadOnlyDictionary<string, int>> GetNotificationCountsByTypeAsync(string? providerId = null, DateTimeOffset? since = null, CancellationToken ct = default);

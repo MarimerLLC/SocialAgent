@@ -416,11 +416,20 @@ public class BlueskyProvider(
         };
     }
 
-    private static string BuildPostUrl(BlueskyPostView post)
+    private static string BuildPostUrl(BlueskyPostView post) => BuildPostUrl(post.Uri, post.Author?.Handle);
+
+    private static string BuildPostUrl(string atUri, string? handle)
     {
-        var rkey = post.Uri[(post.Uri.LastIndexOf('/') + 1)..];
-        return $"https://bsky.app/profile/{post.Author?.Handle ?? "unknown"}/post/{rkey}";
+        var rkey = atUri[(atUri.LastIndexOf('/') + 1)..];
+        return $"https://bsky.app/profile/{handle ?? "unknown"}/post/{rkey}";
     }
+
+    // A mention, reply or quote notification's URI is the post that did it. Likes, reposts and
+    // follows point at their own records, which have no page.
+    private static string? BuildNotificationUrl(BlueskyNotificationItem notification) =>
+        notification.Uri.Contains("/app.bsky.feed.post/", StringComparison.Ordinal)
+            ? BuildPostUrl(notification.Uri, notification.Author?.Handle)
+            : null;
 
     private SocialNotification MapToSocialNotification(BlueskyNotificationItem notification)
     {
@@ -433,6 +442,7 @@ public class BlueskyProvider(
             FromHandle = notification.Author?.Handle ?? "unknown",
             CreatedAt = notification.Record?.CreatedAt ?? notification.IndexedAt,
             Content = notification.Record?.Text,
+            Url = BuildNotificationUrl(notification),
             IsRead = notification.IsRead
         };
     }

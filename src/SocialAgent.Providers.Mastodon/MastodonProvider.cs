@@ -258,6 +258,8 @@ public class MastodonProvider(
             CreatedAt = notification.CreatedAt,
             RelatedPostId = notification.Status?.Id is not null ? $"mastodon:{notification.Status.Id}" : null,
             Content = HtmlText.ToPlainText(notification.Status?.Content),
+            // Only a mention's status is the post that did it; for a favourite or reblog it is your own post.
+            Url = notification.Type == "mention" ? notification.Status?.Url : null,
             IsRead = isRead
         };
     }

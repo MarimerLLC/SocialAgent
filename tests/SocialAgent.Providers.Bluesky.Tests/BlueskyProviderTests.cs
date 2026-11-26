@@ -189,6 +189,29 @@ public class BlueskyProviderTests
     }
 
     [TestMethod]
+    public async Task GetNotifications_LinkRepliesToTheirPost_ButNotLikes()
+    {
+        const string notificationsJson = """
+            {"notifications":[
+              {"uri":"at://did:plc:alice/app.bsky.feed.post/3abc","cid":"c1","reason":"reply","isRead":false,
+               "indexedAt":"2026-11-25T10:00:00Z","author":{"did":"did:plc:alice","handle":"alice.bsky.social"},
+               "record":{"text":"nice post","createdAt":"2026-11-25T10:00:00Z"}},
+              {"uri":"at://did:plc:bob/app.bsky.feed.like/3def","cid":"c2","reason":"like","isRead":true,
+               "indexedAt":"2026-11-25T09:00:00Z","author":{"did":"did:plc:bob","handle":"bob.bsky.social"}}
+            ]}
+            """;
+        var handler = StubHttpMessageHandler.Sequence(
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, SessionJson),
+            () => StubHttpMessageHandler.Json(HttpStatusCode.OK, notificationsJson));
+        var provider = CreateProvider(handler);
+
+        var notifications = await provider.GetNotificationsAsync();
+
+        Assert.AreEqual("https://bsky.app/profile/alice.bsky.social/post/3abc", notifications.Single(n => n.Type == "reply").Url);
+        Assert.IsNull(notifications.Single(n => n.Type == "like").Url, "a like record has no page");
+    }
+
+    [TestMethod]
     public async Task GetRecentPosts_ExcludesReposts()
     {
         // getAuthorFeed mixes in the account's reposts, which carry the original author and their

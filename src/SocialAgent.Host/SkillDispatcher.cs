@@ -1,8 +1,5 @@
 using System.Globalization;
 using System.Text.Json;
-using SocialAgent.Core.Analytics;
-using SocialAgent.Core.Providers;
-using SocialAgent.Data.Repositories;
 using SocialAgent.Host.Routing;
 
 namespace SocialAgent.Host;
@@ -40,6 +37,9 @@ internal sealed class SkillDispatcher(IServiceScopeFactory scopeFactory, ILogger
             routedFrom = $"routed from text \"{text}\"";
         }
 
+        // Every front end shares the same queries and providerId resolution (SocialQueries).
+        var queries = ActivatorUtilities.GetServiceOrCreateInstance<SocialQueries>(scope.ServiceProvider);
+
         // Resolve providerId before any query. The repository filters by exact id, so an
         // unrecognised value ("Mastodon", "all", "mastodon,bluesky") used to match nothing and
         // return an empty result that read as "no data" (#9).
@@ -49,13 +49,17 @@ internal sealed class SkillDispatcher(IServiceScopeFactory scopeFactory, ILogger
             // Known ids: the enabled providers, plus any provider that still has stored rows. A
             // null filter returns every stored row, so it must only stand in for a list that names
             // all of these.
-            var knownProviderIds = ProviderSelection.KnownProviderIds(
-                scope.ServiceProvider.GetServices<ISocialMediaProvider>().Select(x => x.ProviderId),
-                await scope.ServiceProvider.GetRequiredService<ISocialDataRepository>().GetStoredProviderIdsAsync(ct));
-
-            var selection = p.TryGetProviderId(out var requested, out var shapeError)
-                ? ProviderSelection.Resolve(requested, knownProviderIds)
-                : ProviderSelectionResult.Invalid(shapeError!);
+            ProviderSelectionResult selection;
+            IReadOnlyList<string> knownProviderIds;
+            if (p.TryGetProviderId(out var requested, out var shapeError))
+            {
+                (selection, knownProviderIds) = await queries.ResolveProviderAsync(requested, ct);
+            }
+            else
+            {
+                knownProviderIds = await queries.KnownProviderIdsAsync(ct);
+                selection = ProviderSelectionResult.Invalid(shapeError!);
+            }
             if (!selection.IsValid)
             {
                 logger.LogInformation("Rejected skill {SkillId} ({RoutedFrom}) parameters={Parameters}: {Error}",
@@ -70,79 +74,16 @@ internal sealed class SkillDispatcher(IServiceScopeFactory scopeFactory, ILogger
 
         return skillId switch
         {
-            "engagement-summary" => await HandleEngagementSummaryAsync(scope.ServiceProvider, provider, p, ct),
-            "top-posts" => await HandleTopPostsAsync(scope.ServiceProvider, provider, p, ct),
-            "recent-mentions" => await HandleRecentMentionsAsync(scope.ServiceProvider, provider, p, ct),
-            "follower-insights" => await HandleFollowerInsightsAsync(scope.ServiceProvider, provider, p, ct),
-            "platform-comparison" => await HandlePlatformComparisonAsync(scope.ServiceProvider, p, ct),
-            "check-notifications" => await HandleCheckNotificationsAsync(scope.ServiceProvider, provider, ct),
-            "provider-status" => await HandleProviderStatusAsync(scope.ServiceProvider, ct),
+            "engagement-summary" => FormatJson(await queries.GetEngagementSummaryAsync(provider, p.Since, ct)),
+            "top-posts" => FormatJson(await queries.GetTopPostsAsync(p.Count ?? 10, provider, p.Since, ct)),
+            "recent-mentions" => FormatJson(await queries.GetRecentMentionsAsync(p.Count ?? 20, provider, p.Since, ct)),
+            "follower-insights" => FormatJson(await queries.GetTopEngagersAsync(p.Count ?? 10, provider, p.Since, ct)),
+            "platform-comparison" => FormatJson(await queries.GetPlatformComparisonAsync(p.Since, ct)),
+            "check-notifications" => FormatJson(await queries.GetUnreadNotificationsAsync(provider, ct)),
+            "provider-status" => FormatJson(await queries.GetProviderStatusesAsync(ct)),
             _ => $"Unknown skill '{skillId}'. Available skills: engagement-summary, top-posts, recent-mentions, follower-insights, platform-comparison, check-notifications, provider-status"
         };
     }
-
-    // `provider` is the resolved filter from ProviderSelection: null for every provider, or one
-    // canonical provider id. Handlers never see the raw providerId.
-
-    private static async Task<string> HandleEngagementSummaryAsync(IServiceProvider sp, string? provider, SkillParameters p, CancellationToken ct)
-    {
-        var analytics = sp.GetRequiredService<IAnalyticsService>();
-        var summary = await analytics.GetEngagementSummaryAsync(provider, p.Since, ct);
-        return FormatJson(summary);
-    }
-
-    private static async Task<string> HandleTopPostsAsync(IServiceProvider sp, string? provider, SkillParameters p, CancellationToken ct)
-    {
-        var analytics = sp.GetRequiredService<IAnalyticsService>();
-        var posts = await analytics.GetTopPostsAsync(p.Count ?? 10, provider, p.Since, ct);
-        return FormatJson(posts);
-    }
-
-    private static async Task<string> HandleRecentMentionsAsync(IServiceProvider sp, string? provider, SkillParameters p, CancellationToken ct)
-    {
-        var analytics = sp.GetRequiredService<IAnalyticsService>();
-        var mentions = await analytics.GetRecentMentionsAsync(p.Count ?? 20, provider, ct);
-        return FormatJson(mentions);
-    }
-
-    private static async Task<string> HandleFollowerInsightsAsync(IServiceProvider sp, string? provider, SkillParameters p, CancellationToken ct)
-    {
-        var analytics = sp.GetRequiredService<IAnalyticsService>();
-        var engagers = await analytics.GetTopEngagersAsync(p.Count ?? 10, provider, p.Since, ct);
-        return FormatJson(engagers);
-    }
-
-    private static async Task<string> HandlePlatformComparisonAsync(IServiceProvider sp, SkillParameters p, CancellationToken ct)
-    {
-        var analytics = sp.GetRequiredService<IAnalyticsService>();
-        var comparison = await analytics.GetPlatformComparisonAsync(p.Since, ct);
-        return FormatJson(comparison);
-    }
-
-    private static async Task<string> HandleCheckNotificationsAsync(IServiceProvider sp, string? provider, CancellationToken ct)
-    {
-        var repository = sp.GetRequiredService<ISocialDataRepository>();
-        var unread = await repository.GetUnreadNotificationsAsync(provider, ct);
-        return FormatJson(unread);
-    }
-
-    private static async Task<string> HandleProviderStatusAsync(IServiceProvider sp, CancellationToken ct)
-    {
-        var providers = sp.GetServices<ISocialMediaProvider>();
-        var statuses = new List<object>();
-        foreach (var provider in providers)
-        {
-            var connected = await provider.ValidateConnectionAsync(ct);
-            statuses.Add(new
-            {
-                provider.ProviderId,
-                provider.ProviderName,
-                Connected = connected
-            });
-        }
-        return FormatJson(statuses);
-    }
-
     private static string FormatJson(object data) => JsonSerializer.Serialize(data, JsonPretty);
 
     // A rejected request answers with a JSON object carrying an "error" key, so a caller can tell

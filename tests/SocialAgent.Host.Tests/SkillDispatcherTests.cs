@@ -85,7 +85,7 @@ public class SkillDispatcherTests
             });
         _analytics.GetTopPostsAsync(Arg.Any<int>(), Arg.Any<string?>(), Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>())
             .Returns([]);
-        _analytics.GetRecentMentionsAsync(Arg.Any<int>(), Arg.Any<string?>(), Arg.Any<CancellationToken>())
+        _analytics.GetRecentMentionsAsync(Arg.Any<int>(), Arg.Any<string?>(), Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>())
             .Returns([]);
         _analytics.GetTopEngagersAsync(Arg.Any<int>(), Arg.Any<string?>(), Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>())
             .Returns([]);
@@ -128,7 +128,7 @@ public class SkillDispatcherTests
     {
         await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":"Mastodon"}"""), CancellationToken.None);
 
-        await _analytics.Received(1).GetRecentMentionsAsync(20, "mastodon", Arg.Any<CancellationToken>());
+        await _analytics.Received(1).GetRecentMentionsAsync(20, "mastodon", null, Arg.Any<CancellationToken>());
     }
 
     [TestMethod]
@@ -137,7 +137,7 @@ public class SkillDispatcherTests
         // The combined request RockBot learned to avoid: it used to match nothing and return [].
         await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":"mastodon,bluesky"}"""), CancellationToken.None);
 
-        await _analytics.Received(1).GetRecentMentionsAsync(20, null, Arg.Any<CancellationToken>());
+        await _analytics.Received(1).GetRecentMentionsAsync(20, null, null, Arg.Any<CancellationToken>());
     }
 
     [TestMethod]
@@ -165,7 +165,7 @@ public class SkillDispatcherTests
         var (error, valid) = ParseError(mentions);
         StringAssert.Contains(error, "Unknown providerId 'twitter'", "the message stays readable, not \\u0027-escaped");
         CollectionAssert.AreEqual(new[] { "mastodon", "bluesky" }, valid);
-        await _analytics.DidNotReceiveWithAnyArgs().GetRecentMentionsAsync(default, default, default);
+        await _analytics.DidNotReceiveWithAnyArgs().GetRecentMentionsAsync(default, default, default, default);
 
         // check-notifications goes to the repository rather than analytics; it is guarded too.
         var unread = await _dispatcher.DispatchAsync("check-notifications", string.Empty, Metadata("""{"providerId":"twitter"}"""), CancellationToken.None);
@@ -185,17 +185,17 @@ public class SkillDispatcherTests
         var result = await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata(metadata), CancellationToken.None);
 
         StringAssert.Contains(ParseError(result).Error, "providerId must be a string");
-        await _analytics.DidNotReceiveWithAnyArgs().GetRecentMentionsAsync(default, default, default);
+        await _analytics.DidNotReceiveWithAnyArgs().GetRecentMentionsAsync(default, default, default, default);
     }
 
     [TestMethod]
     public async Task ProviderIdArrayOfStrings_IsAccepted()
     {
         await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":["Bluesky"]}"""), CancellationToken.None);
-        await _analytics.Received(1).GetRecentMentionsAsync(20, "bluesky", Arg.Any<CancellationToken>());
+        await _analytics.Received(1).GetRecentMentionsAsync(20, "bluesky", null, Arg.Any<CancellationToken>());
 
         await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":["mastodon","bluesky"]}"""), CancellationToken.None);
-        await _analytics.Received(1).GetRecentMentionsAsync(20, null, Arg.Any<CancellationToken>());
+        await _analytics.Received(1).GetRecentMentionsAsync(20, null, null, Arg.Any<CancellationToken>());
     }
 
     [TestMethod]
@@ -203,7 +203,7 @@ public class SkillDispatcherTests
     {
         await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":null}"""), CancellationToken.None);
 
-        await _analytics.Received(1).GetRecentMentionsAsync(20, null, Arg.Any<CancellationToken>());
+        await _analytics.Received(1).GetRecentMentionsAsync(20, null, null, Arg.Any<CancellationToken>());
     }
 
     [TestMethod]
@@ -220,7 +220,7 @@ public class SkillDispatcherTests
         var (error, valid) = ParseError(subset);
         StringAssert.Contains(error, "one provider or all of them");
         CollectionAssert.AreEqual(new[] { "mastodon", "bluesky", "threads" }, valid);
-        await _analytics.DidNotReceiveWithAnyArgs().GetRecentMentionsAsync(default, default, default);
+        await _analytics.DidNotReceiveWithAnyArgs().GetRecentMentionsAsync(default, default, default, default);
     }
 
     [TestMethod]
