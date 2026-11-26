@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using SocialAgent.Core.Models;
@@ -161,6 +162,131 @@ public class DatabaseMigrationServiceTests
         await using var db = CreateContext();
         Assert.AreEqual(db.Database.GetMigrations().Count(), (await db.Database.GetAppliedMigrationsAsync()).Count());
         Assert.AreEqual(0, await db.Posts.CountAsync());
+    }
+
+    // The TEXT form EF Core's SQLite provider wrote DateTimeOffset in before 1.5.4.
+    private const string LegacyTextFormat = "yyyy-MM-dd HH:mm:ss.FFFFFFFzzz";
+
+    // One value per shape the conversion must handle: a three-digit fraction at UTC, a full
+    // seven-digit fraction at a negative offset, no fraction at all (no '.') at a half-hour offset,
+    // and a short fraction at a 45-minute offset.
+    private static readonly DateTimeOffset UtcWithMillis = new DateTimeOffset(2026, 11, 25, 3, 6, 9, TimeSpan.Zero).AddTicks(4_620_000);
+    private static readonly DateTimeOffset ChicagoFullFraction = new DateTimeOffset(2026, 11, 25, 9, 45, 0, TimeSpan.FromHours(-6)).AddTicks(1_234_567);
+    private static readonly DateTimeOffset IndiaNoFraction = new(2026, 11, 25, 21, 15, 30, TimeSpan.FromHours(5.5));
+    private static readonly DateTimeOffset NepalHalfSecond = new DateTimeOffset(2026, 1, 2, 0, 10, 0, TimeSpan.FromMinutes(345)).AddTicks(5_000_000);
+
+    [TestMethod]
+    public async Task TextDateTimeOffsets_AreConvertedToUtcTicks_WithoutLosingTheInstant()
+    {
+        // A 1.5.0–1.5.3 SQLite database: migrated up to AddProviderTokens, so its DateTimeOffset
+        // columns are TEXT, holding rows in the format EF wrote them in.
+        await using (var old = CreateContext())
+        {
+            await old.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>().MigrateAsync("AddProviderTokens");
+            await InsertLegacyRowsAsync(old);
+        }
+
+        await using var services = BuildServices();
+        await CreateService(services).StartAsync(CancellationToken.None);
+
+        await using (var db = CreateContext())
+        {
+            Assert.AreEqual(0, (await db.Database.GetPendingMigrationsAsync()).Count());
+            await AssertLegacyRowsReadBackAsync(db);
+
+            // The queries issue #8 found broken now run, ordered and filtered by instant: India
+            // (15:45:30 UTC) is 30 seconds after Chicago (15:45:00.1234567 UTC).
+            var newestFirst = await db.Posts.OrderByDescending(p => p.CreatedAt).Select(p => p.PlatformPostId).ToListAsync();
+            CollectionAssert.AreEqual(new[] { "india", "chicago", "utc", "nepal" }, newestFirst);
+            var since = await db.Posts.Where(p => p.CreatedAt >= ChicagoFullFraction).Select(p => p.PlatformPostId).ToListAsync();
+            CollectionAssert.AreEquivalent(new[] { "india", "chicago" }, since);
+        }
+
+        // Down restores TEXT, at offset +00:00 with the instant intact, and Up converts it again.
+        await using (var db = CreateContext())
+        {
+            var migrator = db.GetService<Microsoft.EntityFrameworkCore.Migrations.IMigrator>();
+            await migrator.MigrateAsync("AddProviderTokens");
+
+            var text = await db.Database.SqlQueryRaw<string>("SELECT \"CreatedAt\" AS \"Value\" FROM \"Posts\" WHERE \"PlatformPostId\" = 'chicago'").SingleAsync();
+            Assert.AreEqual(ChicagoFullFraction.ToUniversalTime().ToString(LegacyTextFormat), text);
+
+            await migrator.MigrateAsync();
+        }
+
+        await using (var db = CreateContext())
+        {
+            await AssertLegacyRowsReadBackAsync(db);
+        }
+    }
+
+    [TestMethod]
+    public void LegacyTextFormat_MatchesWhatTheConversionSqlParses()
+    {
+        // Pin the shapes the migration's SQL relies on: 19 characters of local date and time, an
+        // optional '.' and fraction, then a six-character "+HH:MM" offset.
+        Assert.AreEqual("2026-11-25 03:06:09.462+00:00", UtcWithMillis.ToString(LegacyTextFormat));
+        Assert.AreEqual("2026-11-25 09:45:00.1234567-06:00", ChicagoFullFraction.ToString(LegacyTextFormat));
+        Assert.AreEqual("2026-11-25 21:15:30+05:30", IndiaNoFraction.ToString(LegacyTextFormat));
+    }
+
+    private static async Task InsertLegacyRowsAsync(SocialAgentDbContext db)
+    {
+        static string Text(DateTimeOffset value) => value.ToString(LegacyTextFormat);
+
+        foreach (var (id, createdAt) in new[] { ("utc", UtcWithMillis), ("chicago", ChicagoFullFraction), ("india", IndiaNoFraction), ("nepal", NepalHalfSecond) })
+        {
+            await db.Database.ExecuteSqlAsync($"""
+                INSERT INTO "Posts" ("Id", "ProviderId", "PlatformPostId", "AuthorHandle", "Content", "CreatedAt",
+                    "LikeCount", "RepostCount", "ReplyCount", "IsOwnPost", "LastUpdated")
+                VALUES ({"test:" + id}, 'test', {id}, 'me', 'hello', {Text(createdAt)}, 0, 0, 0, 1, {Text(UtcWithMillis)})
+                """);
+        }
+
+        await db.Database.ExecuteSqlAsync($"""
+            INSERT INTO "Notifications" ("Id", "ProviderId", "PlatformNotificationId", "Type", "FromHandle", "CreatedAt", "IsRead")
+            VALUES ('test:n1', 'test', 'n1', 'mention', 'someone', {Text(ChicagoFullFraction)}, 0)
+            """);
+        await db.Database.ExecuteSqlAsync($"""
+            INSERT INTO "Profiles" ("ProviderId", "Handle", "FollowerCount", "FollowingCount", "PostCount", "LastUpdated")
+            VALUES ('test', 'me', 1, 2, 3, {Text(IndiaNoFraction)})
+            """);
+        await db.Database.ExecuteSqlAsync($"""
+            INSERT INTO "PollStates" ("ProviderId", "LastPollTime") VALUES ('test', {Text(NepalHalfSecond)}), ('never', NULL)
+            """);
+        await db.Database.ExecuteSqlAsync($"""
+            INSERT INTO "ProviderTokens" ("ProviderId", "AccessToken", "ExpiresAt", "UpdatedAt")
+            VALUES ('threads', 'token-1', {Text(IndiaNoFraction)}, {Text(ChicagoFullFraction)})
+            """);
+    }
+
+    private static async Task AssertLegacyRowsReadBackAsync(SocialAgentDbContext db)
+    {
+        static void AssertInstant(DateTimeOffset expected, DateTimeOffset actual, string what)
+        {
+            Assert.AreEqual(expected.UtcTicks, actual.UtcTicks, $"{what}: the instant must survive to the tick");
+            Assert.AreEqual(TimeSpan.Zero, actual.Offset, $"{what}: values read back as UTC");
+        }
+
+        var posts = await db.Posts.AsNoTracking().ToDictionaryAsync(p => p.PlatformPostId);
+        Assert.AreEqual(4, posts.Count);
+        AssertInstant(UtcWithMillis, posts["utc"].CreatedAt, "Posts.CreatedAt (utc)");
+        AssertInstant(ChicagoFullFraction, posts["chicago"].CreatedAt, "Posts.CreatedAt (chicago)");
+        AssertInstant(IndiaNoFraction, posts["india"].CreatedAt, "Posts.CreatedAt (india)");
+        AssertInstant(NepalHalfSecond, posts["nepal"].CreatedAt, "Posts.CreatedAt (nepal)");
+        AssertInstant(UtcWithMillis, posts["utc"].LastUpdated, "Posts.LastUpdated");
+
+        AssertInstant(ChicagoFullFraction, (await db.Notifications.AsNoTracking().SingleAsync()).CreatedAt, "Notifications.CreatedAt");
+        AssertInstant(IndiaNoFraction, (await db.Profiles.AsNoTracking().SingleAsync()).LastUpdated, "Profiles.LastUpdated");
+
+        var polls = await db.PollStates.AsNoTracking().ToDictionaryAsync(p => p.ProviderId);
+        AssertInstant(NepalHalfSecond, polls["test"].LastPollTime!.Value, "PollStates.LastPollTime");
+        Assert.IsNull(polls["never"].LastPollTime, "a null stays null");
+
+        var token = await db.ProviderTokens.AsNoTracking().SingleAsync();
+        Assert.AreEqual("token-1", token.AccessToken);
+        AssertInstant(IndiaNoFraction, token.ExpiresAt, "ProviderTokens.ExpiresAt");
+        AssertInstant(ChicagoFullFraction, token.UpdatedAt, "ProviderTokens.UpdatedAt");
     }
 
     private static SocialPost NewPost(string platformPostId) => new()

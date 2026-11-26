@@ -11,6 +11,20 @@ public class SocialAgentDbContext(DbContextOptions<SocialAgentDbContext> options
     public DbSet<PollState> PollStates => Set<PollState>();
     public DbSet<ProviderToken> ProviderTokens => Set<ProviderToken>();
 
+    protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
+    {
+        // SQLite has no date type: EF stores DateTimeOffset there as TEXT and cannot translate
+        // comparisons or ORDER BY on it, so every `since` filter and newest-first query failed.
+        // Storing it as UTC ticks makes both work in SQL, ordered by instant. PostgreSQL has a
+        // native timestamptz, and the model is built per provider, so its model and migrations are
+        // untouched by this.
+        if (Database.IsSqlite())
+        {
+            configurationBuilder.Properties<DateTimeOffset>().HaveConversion<UtcTicksDateTimeOffsetConverter>();
+            configurationBuilder.Properties<DateTimeOffset?>().HaveConversion<UtcTicksDateTimeOffsetConverter>();
+        }
+    }
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<SocialPost>(entity =>

@@ -68,3 +68,6 @@ desktop.ini
 .squad/sessions/
 # Squad: SubSquad activation file (local to this machine)
 .squad-workstream
+
+# Local Claude Code plan files
+.claude/plans/
