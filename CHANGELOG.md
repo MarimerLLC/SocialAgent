@@ -4,6 +4,26 @@ All notable changes to SocialAgent are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.5.5] - 2026-11-25
+
+### Fixed
+- **An unrecognised `providerId` silently returned an empty result** (#9). The repository filters
+  by exact, case-sensitive id, so `"Mastodon"`, `"all"` or `"mastodon,bluesky"` matched nothing and
+  the skill answered `[]`, which read as "no mentions". RockBot had concluded from it that combined
+  multi-provider requests fail, and was querying one provider at a time.
+
+### Changed
+- `providerId` is resolved against the enabled providers before any query (`ProviderSelection`):
+  - It is matched case-insensitively.
+  - Absent, `all` or `*` means every provider.
+  - A comma-separated list naming every enabled provider means every provider, and a list naming
+    one means that one.
+  - Anything else gets an error reply listing the valid ids, and nothing is queried.
+- The agent card describes `providerId` the same way on every skill that takes it, and says
+  directly that one call covers every provider.
+- The dispatch log line records the resolved provider (`provider=all` or `provider=mastodon`).
+  Rejected requests log at Information as `Rejected skill ...`.
+
 ## [1.5.4] - 2026-11-25
 
 ### Fixed

@@ -58,6 +58,8 @@ Both transports are mapped to the same `/a2a` prefix; clients pick whichever the
 
 Seven skills are exposed: `engagement-summary`, `top-posts`, `recent-mentions`, `follower-insights`, `platform-comparison`, `check-notifications`, `provider-status`. Skill dispatch is deterministic (keyword match, optionally LLM-assisted via `SkillRouter`) — there is no LLM in the request path by default. The `AIAgent` registered with the framework is a stub used only as a name carrier; all request handling flows through `SocialAgentA2AHandler`.
 
+The `providerId` parameter is resolved by `ProviderSelection` against the enabled providers before any query, because the repository filters by exact, case-sensitive id and an unrecognised value would silently return `[]`. Resolution is case-insensitive; absent, `all` or `*` means every provider; a comma-separated list means every provider when it names all the enabled ones, or the one it names; anything else is an error listing the valid ids, returned as the skill's reply without querying. `SkillCatalog.TakesProviderId` says which skills take it. Any new front end (such as MCP, #10) must resolve through `ProviderSelection` as well.
+
 ### Provider Plugin Pattern
 
 Each provider implements `ISocialMediaProvider` and is registered via DI extension methods. Providers are conditionally enabled via configuration. The polling service iterates all registered providers on a configurable interval.

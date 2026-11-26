@@ -97,6 +97,9 @@ public class SkillDispatcherTests
         var services = new ServiceCollection();
         services.AddSingleton(_analytics);
         services.AddSingleton(_repository);
+        // The enabled providers, as in production: providerId is resolved against these.
+        services.AddSingleton(StubProvider("mastodon", "Mastodon"));
+        services.AddSingleton(StubProvider("bluesky", "Bluesky"));
         _services = services.BuildServiceProvider();
 
         _dispatcher = new SkillDispatcher(
@@ -109,6 +112,76 @@ public class SkillDispatcherTests
 
     private static Dictionary<string, JsonElement> Metadata(string json) =>
         JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json)!;
+
+    private static ISocialMediaProvider StubProvider(string id, string name)
+    {
+        var provider = Substitute.For<ISocialMediaProvider>();
+        provider.ProviderId.Returns(id);
+        provider.ProviderName.Returns(name);
+        return provider;
+    }
+
+    [TestMethod]
+    public async Task ProviderId_IsMatchedCaseInsensitively_BeforeQuerying()
+    {
+        await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":"Mastodon"}"""), CancellationToken.None);
+
+        await _analytics.Received(1).GetRecentMentionsAsync(20, "mastodon", Arg.Any<CancellationToken>());
+    }
+
+    [TestMethod]
+    public async Task ProviderIdListNamingEveryProvider_QueriesTheUnion()
+    {
+        // The combined request RockBot learned to avoid: it used to match nothing and return [].
+        await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":"mastodon,bluesky"}"""), CancellationToken.None);
+
+        await _analytics.Received(1).GetRecentMentionsAsync(20, null, Arg.Any<CancellationToken>());
+    }
+
+    [TestMethod]
+    public async Task ProviderIdAll_QueriesTheUnion()
+    {
+        await _dispatcher.DispatchAsync("engagement-summary", string.Empty, Metadata("""{"providerId":"all"}"""), CancellationToken.None);
+
+        await _analytics.Received(1).GetEngagementSummaryAsync(null, Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>());
+    }
+
+    [TestMethod]
+    public async Task UnknownProviderId_ReturnsAnError_WithoutQuerying()
+    {
+        var mentions = await _dispatcher.DispatchAsync("recent-mentions", string.Empty, Metadata("""{"providerId":"twitter"}"""), CancellationToken.None);
+
+        StringAssert.Contains(mentions, "Unknown providerId 'twitter'");
+        StringAssert.Contains(mentions, "Valid values: mastodon, bluesky");
+        await _analytics.DidNotReceiveWithAnyArgs().GetRecentMentionsAsync(default, default, default);
+
+        // check-notifications goes to the repository rather than analytics; it is guarded too.
+        var unread = await _dispatcher.DispatchAsync("check-notifications", string.Empty, Metadata("""{"providerId":"twitter"}"""), CancellationToken.None);
+
+        StringAssert.Contains(unread, "Unknown providerId 'twitter'");
+        await _repository.DidNotReceiveWithAnyArgs().GetUnreadNotificationsAsync(default, default);
+    }
+
+    [TestMethod]
+    public async Task SkillsWithoutProviderId_IgnoreIt()
+    {
+        // platform-comparison is all-platforms by design, so a bogus providerId must not block it.
+        var result = await _dispatcher.DispatchAsync("platform-comparison", string.Empty, Metadata("""{"providerId":"twitter"}"""), CancellationToken.None);
+
+        Assert.IsFalse(result.Contains("Unknown providerId", StringComparison.Ordinal));
+        await _analytics.Received(1).GetPlatformComparisonAsync(Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>());
+    }
+
+    [TestMethod]
+    public void AgentCard_DescribesProviderIdForEverySkillThatTakesIt()
+    {
+        foreach (var skill in SkillCatalog.AgentCardSkills)
+        {
+            var mentionsProviderId = skill.Description.Contains("providerId (string; one provider", StringComparison.Ordinal);
+            Assert.AreEqual(SkillCatalog.TakesProviderId(skill.Id), mentionsProviderId,
+                $"{skill.Id}: the card must describe providerId exactly when the skill filters by it");
+        }
+    }
 
     [TestMethod]
     public async Task ExplicitSkillId_TakesPrecedenceOverText()
