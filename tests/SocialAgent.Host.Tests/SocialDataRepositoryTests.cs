@@ -32,19 +32,155 @@ public class SocialDataRepositoryTests
         }
     }
 
-    private static SocialPost Post(string id, int likes, int reposts = 0, int replies = 0) => new()
+    private static SocialPost Post(string id, int likes, int reposts = 0, int replies = 0, DateTimeOffset? createdAt = null) => new()
     {
         Id = $"mastodon:{id}",
         ProviderId = "mastodon",
         PlatformPostId = id,
         AuthorHandle = "rockylhotka",
         Content = "hello",
-        CreatedAt = DateTimeOffset.UtcNow.AddDays(-2),
+        CreatedAt = createdAt ?? DateTimeOffset.UtcNow.AddDays(-2),
         LikeCount = likes,
         RepostCount = reposts,
         ReplyCount = replies,
         IsOwnPost = true
     };
+
+    private static SocialNotification Notification(string id, DateTimeOffset createdAt, string type = "mention",
+        string from = "someone", bool isRead = false) => new()
+    {
+        Id = $"mastodon:{id}",
+        ProviderId = "mastodon",
+        PlatformNotificationId = id,
+        Type = type,
+        FromHandle = from,
+        CreatedAt = createdAt,
+        IsRead = isRead
+    };
+
+    // Fixed instants, so ordering and cut-offs don't depend on when the test runs.
+    private static readonly DateTimeOffset Day1 = new(2026, 11, 1, 12, 0, 0, TimeSpan.Zero);
+    private static readonly DateTimeOffset Day2 = Day1.AddDays(1);
+    private static readonly DateTimeOffset Day3 = Day1.AddDays(2);
+
+    // The queries below are the ones issue #8 found broken on SQLite: EF could not translate a
+    // DateTimeOffset comparison or ORDER BY there until the column was stored as a binary long.
+
+    [TestMethod]
+    public async Task GetPosts_FiltersBySince_NewestFirst_AndHonoursLimit()
+    {
+        var repository = new SocialDataRepository(_db);
+        await repository.UpsertPostsAsync([Post("a", 0, createdAt: Day1), Post("c", 0, createdAt: Day3), Post("b", 0, createdAt: Day2)]);
+
+        var all = await repository.GetPostsAsync();
+        CollectionAssert.AreEqual(new[] { "c", "b", "a" }, all.Select(p => p.PlatformPostId).ToArray());
+
+        var sinceDay2 = await repository.GetPostsAsync(since: Day2);
+        CollectionAssert.AreEqual(new[] { "c", "b" }, sinceDay2.Select(p => p.PlatformPostId).ToArray(), "since is inclusive");
+
+        var newest = await repository.GetPostsAsync(limit: 1);
+        Assert.AreEqual("c", newest.Single().PlatformPostId);
+    }
+
+    [TestMethod]
+    public async Task GetTopPostsByEngagement_FiltersBySince()
+    {
+        var repository = new SocialDataRepository(_db);
+        await repository.UpsertPostsAsync([Post("old-popular", likes: 50, createdAt: Day1), Post("new", likes: 3, createdAt: Day3)]);
+
+        var top = await repository.GetTopPostsByEngagementAsync(10, since: Day2);
+
+        Assert.AreEqual("new", top.Single().PlatformPostId);
+    }
+
+    [TestMethod]
+    public async Task GetNotifications_FiltersBySince_NewestFirst()
+    {
+        var repository = new SocialDataRepository(_db);
+        await repository.UpsertNotificationsAsync([Notification("1", Day1), Notification("3", Day3), Notification("2", Day2)]);
+
+        var sinceDay2 = await repository.GetNotificationsAsync(since: Day2);
+
+        CollectionAssert.AreEqual(new[] { "3", "2" }, sinceDay2.Select(n => n.PlatformNotificationId).ToArray());
+    }
+
+    [TestMethod]
+    public async Task GetUnreadNotifications_NewestFirst()
+    {
+        var repository = new SocialDataRepository(_db);
+        await repository.UpsertNotificationsAsync([
+            Notification("1", Day1), Notification("3", Day3), Notification("2", Day2, isRead: true)]);
+
+        var unread = await repository.GetUnreadNotificationsAsync();
+
+        CollectionAssert.AreEqual(new[] { "3", "1" }, unread.Select(n => n.PlatformNotificationId).ToArray());
+    }
+
+    [TestMethod]
+    public async Task Aggregates_FilterBySince()
+    {
+        var repository = new SocialDataRepository(_db);
+        await repository.UpsertPostsAsync([Post("old", likes: 10, createdAt: Day1), Post("new", likes: 2, reposts: 1, createdAt: Day3)]);
+        await repository.UpsertNotificationsAsync([
+            Notification("1", Day1, type: "like", from: "alice"),
+            Notification("2", Day3, type: "mention", from: "bob"),
+            Notification("3", Day3, type: "mention", from: "bob")]);
+
+        var totals = await repository.GetPostEngagementTotalsAsync(since: Day2);
+        Assert.AreEqual(new PostEngagementTotals(1, 2, 1, 0), totals);
+
+        var counts = await repository.GetNotificationCountsByTypeAsync(since: Day2);
+        Assert.AreEqual(1, counts.Count);
+        Assert.AreEqual(2, counts["mention"]);
+
+        var tallies = await repository.GetEngagerTalliesAsync(since: Day2);
+        Assert.AreEqual(new EngagerTally("bob", "mention", 2), tallies.Single());
+    }
+
+    [TestMethod]
+    public async Task PurgeOld_DeletesOnlyRowsOlderThanTheCutoff()
+    {
+        var repository = new SocialDataRepository(_db);
+        await repository.UpsertPostsAsync([Post("old", 0, createdAt: Day1), Post("new", 0, createdAt: Day3)]);
+        await repository.UpsertNotificationsAsync([Notification("old", Day1), Notification("new", Day3)]);
+
+        Assert.AreEqual(1, await repository.PurgeOldPostsAsync(Day2));
+        Assert.AreEqual(1, await repository.PurgeOldNotificationsAsync(Day2));
+
+        Assert.AreEqual("new", (await _db.Posts.AsNoTracking().SingleAsync()).PlatformPostId);
+        Assert.AreEqual("new", (await _db.Notifications.AsNoTracking().SingleAsync()).PlatformNotificationId);
+    }
+
+    [TestMethod]
+    public async Task DateTimeOffset_KeepsItsInstant_AndReadsBackAsUtc()
+    {
+        var repository = new SocialDataRepository(_db);
+        var india = new DateTimeOffset(2026, 11, 25, 21, 15, 30, 123, TimeSpan.FromHours(5.5)).AddTicks(4567);
+        await repository.UpsertPostsAsync([Post("india", 0, createdAt: india)]);
+
+        var stored = (await _db.Posts.AsNoTracking().SingleAsync()).CreatedAt;
+
+        Assert.AreEqual(india.UtcTicks, stored.UtcTicks, "the instant survives to the tick");
+        Assert.AreEqual(TimeSpan.Zero, stored.Offset, "values read back as UTC, as PostgreSQL's timestamptz returns them");
+    }
+
+    [TestMethod]
+    public async Task Ordering_AndSince_FollowTheInstant_AcrossOffsets()
+    {
+        // India's wall clock (21:00) is later than Chicago's (10:00), but the Chicago post happened
+        // half an hour later. Ordering by local clock ticks, as EF's DateTimeOffsetToBinaryConverter
+        // stores them, would get this backwards.
+        var repository = new SocialDataRepository(_db);
+        var india = new DateTimeOffset(2026, 11, 25, 21, 0, 0, TimeSpan.FromHours(5.5));   // 15:30 UTC
+        var chicago = new DateTimeOffset(2026, 11, 25, 10, 0, 0, TimeSpan.FromHours(-6));  // 16:00 UTC
+        await repository.UpsertPostsAsync([Post("india", 0, createdAt: india), Post("chicago", 0, createdAt: chicago)]);
+
+        var newestFirst = await repository.GetPostsAsync();
+        CollectionAssert.AreEqual(new[] { "chicago", "india" }, newestFirst.Select(p => p.PlatformPostId).ToArray());
+
+        var since = await repository.GetPostsAsync(since: new DateTimeOffset(2026, 11, 25, 15, 45, 0, TimeSpan.Zero));
+        Assert.AreEqual("chicago", since.Single().PlatformPostId);
+    }
 
     [TestMethod]
     public async Task UpsertPosts_ReturnsCountOfNewPostsOnly()

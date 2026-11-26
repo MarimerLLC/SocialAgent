@@ -4,6 +4,23 @@ All notable changes to SocialAgent are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.5.4] - 2026-11-25
+
+### Fixed
+- **Most skills failed on the SQLite dev database** (#8). EF Core cannot translate `DateTimeOffset`
+  comparisons or `ORDER BY` on SQLite, where it stores them as TEXT. So every `since` filter,
+  every newest-first query and the retention purge threw: `recent-mentions`, `top-posts` and the
+  others answered "Error executing skill". PostgreSQL (production) was never affected.
+  - On SQLite only, every `DateTimeOffset` column is now stored as **UTC ticks**
+    (`UtcTicksDateTimeOffsetConverter`). Queries compare and order by instant. Values read back
+    at offset zero, which is what PostgreSQL's `timestamptz` returns.
+  - EF's built-in `DateTimeOffsetToBinaryConverter` was rejected: it packs the local clock time,
+    so values in different offsets would sort by wall-clock time rather than by when they happened.
+  - Two SQLite migrations, `StoreDateTimeOffsetAsUtcTicks` (column types) and
+    `ConvertDateTimeOffsetTextToUtcTicks` (data), convert an existing dev database in place,
+    keeping every value's instant to the tick. Both are reversible. The PostgreSQL model and
+    migrations are unchanged.
+
 ## [1.5.3] - 2026-11-25
 
 ### Changed
