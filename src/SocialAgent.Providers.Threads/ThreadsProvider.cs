@@ -301,6 +301,7 @@ public class ThreadsProvider(
             FromHandle = item.Username ?? "unknown",
             CreatedAt = item.Timestamp,
             Content = item.Text,
+            Url = item.Permalink,
             // Threads has no native read marker. Notifications stay unread until a higher-layer
             // mark-as-read mechanism is added.
             IsRead = false

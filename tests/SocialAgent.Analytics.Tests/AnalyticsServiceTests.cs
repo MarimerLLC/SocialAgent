@@ -43,6 +43,20 @@ public class AnalyticsServiceTests
     }
 
     [TestMethod]
+    public async Task GetRecentMentions_IncludesReplies_AndPassesSince()
+    {
+        // Bluesky and Threads report a reply as its own type; filtering on "mention" alone hid them.
+        var since = new DateTimeOffset(2026, 11, 20, 0, 0, 0, TimeSpan.Zero);
+
+        await _service.GetRecentMentionsAsync(5, "bluesky", since);
+
+        await _repository.Received(1).GetNotificationsAsync(
+            "bluesky", null, since, 5,
+            Arg.Is<IReadOnlyCollection<string>?>(t => t != null && t.Order().SequenceEqual(new[] { "mention", "reply" })),
+            Arg.Any<CancellationToken>());
+    }
+
+    [TestMethod]
     public async Task GetEngagementSummary_WithNoData_ReturnsZeros()
     {
         var summary = await _service.GetEngagementSummaryAsync();

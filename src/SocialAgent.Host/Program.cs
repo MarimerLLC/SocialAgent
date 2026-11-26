@@ -29,6 +29,10 @@ builder.Host.UseSerilog((context, configuration) => configuration
 // AIAgent) is bypassed entirely.
 builder.Services.AddKeyedSingleton<Microsoft.Agents.AI.AIAgent, SocialAgentStubAgent>(SocialAgentStubAgent.AgentName);
 builder.Services.AddSingleton<SkillDispatcher>();
+// The queries every front end (A2A skills, MCP tools and resources) shares.
+builder.Services.AddScoped<SocialQueries>();
+// What the polling loop saved, for MCP listen streams. In-process, so one replica only.
+builder.Services.AddSingleton<ISocialChanges, SocialChanges>();
 builder.Services.AddKeyedSingleton<IAgentHandler, SocialAgentA2AHandler>(SocialAgentStubAgent.AgentName);
 builder.AddA2AServer(SocialAgentStubAgent.AgentName);
 

@@ -46,9 +46,11 @@ public class AnalyticsService(ISocialDataRepository repository) : IAnalyticsServ
     }
 
     public async Task<IReadOnlyList<SocialNotification>> GetRecentMentionsAsync(
-        int count = 20, string? providerId = null, CancellationToken ct = default)
+        int count = 20, string? providerId = null, DateTimeOffset? since = null, CancellationToken ct = default)
     {
-        return await repository.GetNotificationsAsync(providerId, type: "mention", limit: count, ct: ct);
+        // Replies count as mentions: Bluesky and Threads report them as their own type.
+        return await repository.GetNotificationsAsync(
+            providerId, since: since, limit: count, types: NotificationTypes.Mentions, ct: ct);
     }
 
     public async Task<IReadOnlyList<TopEngager>> GetTopEngagersAsync(

@@ -206,10 +206,10 @@ public class SocialDataRepositoryTests
     {
         var repository = new SocialDataRepository(_db);
 
-        Assert.AreEqual(2, await repository.UpsertPostsAsync([Post("1", 0), Post("2", 0)]));
-        Assert.AreEqual(1, await repository.UpsertPostsAsync([Post("1", 0), Post("2", 0), Post("3", 0)]),
+        Assert.AreEqual(2, (await repository.UpsertPostsAsync([Post("1", 0), Post("2", 0)])).Inserted);
+        Assert.AreEqual(1, (await repository.UpsertPostsAsync([Post("1", 0), Post("2", 0), Post("3", 0)])).Inserted,
             "re-fetched posts are refreshes, not new posts");
-        Assert.AreEqual(0, await repository.UpsertPostsAsync([Post("1", 0)]));
+        Assert.AreEqual(0, (await repository.UpsertPostsAsync([Post("1", 0)])).Inserted);
     }
 
     [TestMethod]
@@ -229,5 +229,82 @@ public class SocialDataRepositoryTests
         Assert.AreEqual(1, stored.RepostCount);
         Assert.AreEqual(2, stored.ReplyCount);
         Assert.IsTrue(stored.LastUpdated > firstSeen, "a refresh should move LastUpdated");
+    }
+
+    [TestMethod]
+    public async Task UpsertPosts_ReportsOnlyPostsWhoseEngagementMoved()
+    {
+        var repository = new SocialDataRepository(_db);
+        var first = await repository.UpsertPostsAsync([Post("1", likes: 0), Post("2", likes: 3)]);
+        Assert.AreEqual(0, first.EngagementChanged.Count, "new posts are inserted, not changed");
+
+        var refresh = await repository.UpsertPostsAsync([Post("1", likes: 1), Post("2", likes: 3), Post("3", likes: 0)]);
+
+        Assert.AreEqual(1, refresh.Inserted);
+        Assert.AreEqual("1", refresh.EngagementChanged.Single().PlatformPostId);
+        Assert.AreEqual(1, refresh.EngagementChanged.Single().LikeCount);
+
+        var unchanged = await repository.UpsertPostsAsync([Post("1", likes: 1), Post("2", likes: 3)]);
+        Assert.AreEqual(0, unchanged.EngagementChanged.Count, "a refresh with the same counts changes nothing");
+    }
+
+    [TestMethod]
+    public async Task UpsertNotifications_ReturnsOnlyNewRows_AndCountsReadStateChanges()
+    {
+        var repository = new SocialDataRepository(_db);
+        var first = await repository.UpsertNotificationsAsync([Notification("1", Day1), Notification("2", Day2)]);
+        CollectionAssert.AreEqual(new[] { "1", "2" }, first.Inserted.Select(n => n.PlatformNotificationId).ToArray());
+        Assert.AreEqual(0, first.ReadStateChanged);
+
+        var second = await repository.UpsertNotificationsAsync([
+            Notification("1", Day1, isRead: true), Notification("2", Day2), Notification("3", Day3)]);
+
+        Assert.AreEqual("3", second.Inserted.Single().PlatformNotificationId);
+        Assert.AreEqual(1, second.InsertedCount);
+        Assert.AreEqual(1, second.ReadStateChanged, "only notification 1 went from unread to read");
+    }
+
+    [TestMethod]
+    public async Task UpsertNotifications_BackfillsAMissingUrl_ButKeepsAStoredOne()
+    {
+        var repository = new SocialDataRepository(_db);
+        await repository.UpsertNotificationsAsync([Notification("1", Day1), WithUrl(Notification("2", Day1), "https://x.test/old")]);
+
+        await repository.UpsertNotificationsAsync([
+            WithUrl(Notification("1", Day1), "https://x.test/1"), WithUrl(Notification("2", Day1), "https://x.test/new")]);
+
+        var stored = await _db.Notifications.AsNoTracking().OrderBy(n => n.PlatformNotificationId).ToListAsync();
+        Assert.AreEqual("https://x.test/1", stored[0].Url);
+        Assert.AreEqual("https://x.test/old", stored[1].Url);
+    }
+
+    [TestMethod]
+    public async Task GetNotifications_FiltersByTypes()
+    {
+        var repository = new SocialDataRepository(_db);
+        await repository.UpsertNotificationsAsync([
+            Notification("1", Day1, type: "mention"), Notification("2", Day2, type: "reply"),
+            Notification("3", Day3, type: "like")]);
+
+        var mentions = await repository.GetNotificationsAsync(types: NotificationTypes.Mentions);
+
+        CollectionAssert.AreEqual(new[] { "2", "1" }, mentions.Select(n => n.PlatformNotificationId).ToArray());
+    }
+
+    [TestMethod]
+    public async Task GetPost_FindsByProviderAndPlatformId()
+    {
+        var repository = new SocialDataRepository(_db);
+        await repository.UpsertPostsAsync([Post("1", likes: 4)]);
+
+        Assert.AreEqual(4, (await repository.GetPostAsync("mastodon", "1"))!.LikeCount);
+        Assert.IsNull(await repository.GetPostAsync("bluesky", "1"));
+        Assert.IsNull(await repository.GetPostAsync("mastodon", "2"));
+    }
+
+    private static SocialNotification WithUrl(SocialNotification notification, string url)
+    {
+        notification.Url = url;
+        return notification;
     }
 }

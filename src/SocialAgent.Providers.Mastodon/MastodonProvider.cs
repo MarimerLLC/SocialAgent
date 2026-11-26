@@ -258,6 +258,7 @@ public class MastodonProvider(
             CreatedAt = notification.CreatedAt,
             RelatedPostId = notification.Status?.Id is not null ? $"mastodon:{notification.Status.Id}" : null,
             Content = HtmlText.ToPlainText(notification.Status?.Content),
+            Url = notification.Status?.Url,
             IsRead = isRead
         };
     }

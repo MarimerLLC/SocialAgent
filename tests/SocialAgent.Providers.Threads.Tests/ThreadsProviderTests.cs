@@ -254,6 +254,20 @@ public class ThreadsProviderHttpTests
     }
 
     [TestMethod]
+    public async Task GetNotifications_CarryThePermalink()
+    {
+        var handler = new StubHttpMessageHandler((request, _) =>
+            StubHttpMessageHandler.Json(HttpStatusCode.OK,
+                request.RequestUri!.AbsolutePath.EndsWith("/replies") ? ThreadsPage(1, after: null) : ThreadsPage(0, after: null)));
+        var (provider, _) = CreateProvider(handler);
+
+        var notifications = await provider.GetNotificationsAsync();
+
+        Assert.AreEqual("reply", notifications.Single().Type);
+        Assert.AreEqual("https://threads.test/0", notifications.Single().Url);
+    }
+
+    [TestMethod]
     public async Task GetNotifications_Tolerates_MissingScopes()
     {
         var handler = new StubHttpMessageHandler((_, _) =>

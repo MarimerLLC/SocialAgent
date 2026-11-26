@@ -67,7 +67,8 @@ public class SocialMediaPollingServiceTests
         var service = new SocialMediaPollingService(
             services.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<SocialMediaPollingService>.Instance,
-            FastPolling());
+            FastPolling(),
+            new SocialChanges());
 
         using var cts = new CancellationTokenSource();
         await service.StartAsync(cts.Token);
@@ -92,7 +93,8 @@ public class SocialMediaPollingServiceTests
         var service = new SocialMediaPollingService(
             services.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<SocialMediaPollingService>.Instance,
-            FastPolling());
+            FastPolling(),
+            new SocialChanges());
 
         using var cts = new CancellationTokenSource();
         await service.StartAsync(cts.Token);
@@ -111,7 +113,8 @@ public class SocialMediaPollingServiceTests
         var service = new SocialMediaPollingService(
             services.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<SocialMediaPollingService>.Instance,
-            FastPolling());
+            FastPolling(),
+            new SocialChanges());
 
         await service.StartAsync(CancellationToken.None);
         await service.StopAsync(CancellationToken.None);
@@ -120,6 +123,112 @@ public class SocialMediaPollingServiceTests
         Assert.IsNotNull(executing);
         Assert.AreNotEqual(TaskStatus.Faulted, executing.Status,
             "a normal shutdown must not surface as a fault");
+    }
+
+    // --- Change notifications (MCP push) --------------------------------------------------
+
+    private static SocialNotification Notification(string id, string type, bool isRead = false) => new()
+    {
+        Id = $"bluesky:{id}",
+        ProviderId = "bluesky",
+        PlatformNotificationId = id,
+        Type = type,
+        FromHandle = "alice",
+        CreatedAt = DateTimeOffset.UtcNow,
+        IsRead = isRead
+    };
+
+    private static (SocialMediaPollingService Service, List<SocialChange> Published, ServiceProvider Services) PollingWith(
+        ISocialDataRepository repository, ISocialMediaProvider provider)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton(repository);
+        services.AddSingleton(provider);
+        var sp = services.BuildServiceProvider();
+        var changes = new SocialChanges();
+        var published = new List<SocialChange>();
+        changes.Subscribe(published.Add);
+        var service = new SocialMediaPollingService(
+            sp.GetRequiredService<IServiceScopeFactory>(), NullLogger<SocialMediaPollingService>.Instance, FastPolling(), changes);
+        return (service, published, sp);
+    }
+
+    [TestMethod]
+    public async Task Poll_AnnouncesNewReplies_AsMentionsAndUnread()
+    {
+        var repository = Substitute.For<ISocialDataRepository>();
+        var reply = Notification("r1", "reply");
+        repository.UpsertNotificationsAsync(Arg.Any<IEnumerable<SocialNotification>>(), Arg.Any<CancellationToken>())
+            .Returns(new NotificationUpsertResult([reply], 0));
+        var provider = Provider("bluesky");
+        provider.GetNotificationsAsync(Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>()).Returns([reply]);
+        var (service, published, sp) = PollingWith(repository, provider);
+        await using var _ = sp;
+
+        await service.PollOnceAsync(CancellationToken.None);
+
+        CollectionAssert.AreEquivalent(
+            new[] { new SocialChange(SocialChangeKind.Mentions, "bluesky"), new SocialChange(SocialChangeKind.Unread, "bluesky") },
+            published);
+    }
+
+    [TestMethod]
+    public async Task Poll_AnnouncesALike_AsUnreadOnly_AndNothingForAlreadyStoredRows()
+    {
+        var repository = Substitute.For<ISocialDataRepository>();
+        var like = Notification("l1", "like");
+        repository.UpsertNotificationsAsync(Arg.Any<IEnumerable<SocialNotification>>(), Arg.Any<CancellationToken>())
+            .Returns(new NotificationUpsertResult([like], 0), new NotificationUpsertResult([], 0));
+        var provider = Provider("bluesky");
+        provider.GetNotificationsAsync(Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>()).Returns([like]);
+        var (service, published, sp) = PollingWith(repository, provider);
+        await using var _ = sp;
+
+        await service.PollOnceAsync(CancellationToken.None);
+        await service.PollOnceAsync(CancellationToken.None);
+
+        Assert.AreEqual(new SocialChange(SocialChangeKind.Unread, "bluesky"), published.Single());
+    }
+
+    [TestMethod]
+    public async Task Poll_AnnouncesEachOwnPostWhoseEngagementMoved()
+    {
+        var repository = Substitute.For<ISocialDataRepository>();
+        var post = new SocialPost
+        {
+            Id = "bluesky:p", ProviderId = "bluesky", PlatformPostId = "at://me/app.bsky.feed.post/p",
+            AuthorHandle = "me", Content = "hi", CreatedAt = DateTimeOffset.UtcNow, LikeCount = 2, IsOwnPost = true
+        };
+        repository.UpsertPostsAsync(Arg.Any<IEnumerable<SocialPost>>(), Arg.Any<CancellationToken>())
+            .Returns(new PostUpsertResult(0, [post]));
+        var provider = Provider("bluesky");
+        provider.GetRecentPostsAsync(Arg.Any<DateTimeOffset?>(), Arg.Any<CancellationToken>()).Returns([post]);
+        var (service, published, sp) = PollingWith(repository, provider);
+        await using var _ = sp;
+
+        await service.PollOnceAsync(CancellationToken.None);
+
+        Assert.AreEqual(new SocialChange(SocialChangeKind.Post, "bluesky", post.PlatformPostId), published.Single());
+    }
+
+    [TestMethod]
+    public async Task Poll_AnnouncesAProviderOnlyWhenItsOutcomeFlips()
+    {
+        var provider = Provider("mastodon");
+        var calls = 0;
+        provider.GetProfileAsync(Arg.Any<CancellationToken>()).Returns(_ => ++calls == 2
+            ? throw new HttpRequestException("down")
+            : Task.FromResult(new SocialProfile { ProviderId = "mastodon", Handle = "me" }));
+        var (service, published, sp) = PollingWith(Substitute.For<ISocialDataRepository>(), provider);
+        await using var _ = sp;
+
+        await service.PollOnceAsync(CancellationToken.None);   // ok: first outcome, nothing to compare
+        await service.PollOnceAsync(CancellationToken.None);   // fails: flip
+        await service.PollOnceAsync(CancellationToken.None);   // ok: flip back
+        await service.PollOnceAsync(CancellationToken.None);   // ok: no change
+
+        Assert.AreEqual(2, published.Count);
+        Assert.IsTrue(published.All(c => c == new SocialChange(SocialChangeKind.Providers, "mastodon")));
     }
 
     // --- Engagement refresh window ---------------------------------------------------------
@@ -177,7 +286,8 @@ public class SocialMediaPollingServiceTests
         var service = new SocialMediaPollingService(
             sp.GetRequiredService<IServiceScopeFactory>(),
             NullLogger<SocialMediaPollingService>.Instance,
-            FastPolling());
+            FastPolling(),
+            new SocialChanges());
         await service.StartAsync(CancellationToken.None);
         await Task.Delay(TimeSpan.FromSeconds(13), CancellationToken.None);
         await service.StopAsync(CancellationToken.None);

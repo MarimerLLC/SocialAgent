@@ -4,11 +4,16 @@ using SocialAgent.Data.Repositories;
 
 namespace SocialAgent.Host.Services;
 
-public class SocialMediaPollingService(
+internal class SocialMediaPollingService(
     IServiceScopeFactory scopeFactory,
     ILogger<SocialMediaPollingService> logger,
-    IConfiguration configuration) : BackgroundService
+    IConfiguration configuration,
+    ISocialChanges changes) : BackgroundService
 {
+    // Each provider's last poll outcome, so a flip between working and failing can be announced.
+    private readonly Dictionary<string, bool> _lastPollSucceeded = new(StringComparer.Ordinal);
+    private readonly Lock _outcomeLock = new();
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         var intervalMinutes = configuration.GetValue("SocialAgent:PollingIntervalMinutes", 5);
@@ -21,7 +26,7 @@ public class SocialMediaPollingService(
         {
             try
             {
-                await PollAllProvidersAsync(stoppingToken);
+                await PollOnceAsync(stoppingToken);
             }
             // Only a fired stoppingToken means shutdown. An HttpClient timeout surfaces as
             // TaskCanceledException, which is an OperationCanceledException — filtering on the
@@ -43,7 +48,8 @@ public class SocialMediaPollingService(
         }
     }
 
-    private async Task PollAllProvidersAsync(CancellationToken ct)
+    /// <summary>One polling cycle across every provider: the loop body, callable from tests.</summary>
+    internal async Task PollOnceAsync(CancellationToken ct)
     {
         using var scope = scopeFactory.CreateScope();
         var providers = scope.ServiceProvider.GetServices<ISocialMediaProvider>();
@@ -51,15 +57,33 @@ public class SocialMediaPollingService(
 
         foreach (var provider in providers)
         {
+            bool succeeded;
             try
             {
                 await PollProviderAsync(provider, repository, ct);
+                succeeded = true;
             }
             // As above: a timeout against one provider must not abort the cycle or the host.
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogError(ex, "Error polling provider {ProviderId}", provider.ProviderId);
+                succeeded = false;
             }
+            RecordOutcome(provider.ProviderId, succeeded);
+        }
+    }
+
+    private void RecordOutcome(string providerId, bool succeeded)
+    {
+        bool flipped;
+        lock (_outcomeLock)
+        {
+            flipped = _lastPollSucceeded.TryGetValue(providerId, out var previous) && previous != succeeded;
+            _lastPollSucceeded[providerId] = succeeded;
+        }
+        if (flipped)
+        {
+            changes.Publish(new SocialChange(SocialChangeKind.Providers, providerId));
         }
     }
 
@@ -100,21 +124,38 @@ public class SocialMediaPollingService(
         var posts = await provider.GetRecentPostsAsync(PostsSince(since), ct);
         if (posts.Count > 0)
         {
-            var inserted = await repository.UpsertPostsAsync(posts, ct);
-            if (inserted > 0)
+            var stored = await repository.UpsertPostsAsync(posts, ct);
+            if (stored.Inserted > 0)
             {
-                logger.LogInformation("Stored {Count} new posts from {Provider}", inserted, provider.ProviderName);
+                logger.LogInformation("Stored {Count} new posts from {Provider}", stored.Inserted, provider.ProviderName);
             }
-            logger.LogDebug("Refreshed engagement on {Count} posts from {Provider}",
-                posts.Count - inserted, provider.ProviderName);
+            logger.LogDebug("Refreshed engagement on {Count} posts from {Provider}, {Changed} changed",
+                posts.Count - stored.Inserted, provider.ProviderName, stored.EngagementChanged.Count);
+            foreach (var post in stored.EngagementChanged.Where(p => p.IsOwnPost))
+            {
+                changes.Publish(new SocialChange(SocialChangeKind.Post, post.ProviderId, post.PlatformPostId));
+            }
         }
 
         // Fetch and store notifications
         var notifications = await provider.GetNotificationsAsync(since, ct);
         if (notifications.Count > 0)
         {
-            await repository.UpsertNotificationsAsync(notifications, ct);
-            logger.LogInformation("Stored {Count} notifications from {Provider}", notifications.Count, provider.ProviderName);
+            var stored = await repository.UpsertNotificationsAsync(notifications, ct);
+            if (stored.InsertedCount > 0)
+            {
+                // Counts only new rows: the fetch window overlaps the last poll, so most of a
+                // batch is usually already stored.
+                logger.LogInformation("Stored {Count} new notifications from {Provider}", stored.InsertedCount, provider.ProviderName);
+            }
+            if (stored.Inserted.Any(n => NotificationTypes.IsMention(n.Type)))
+            {
+                changes.Publish(new SocialChange(SocialChangeKind.Mentions, provider.ProviderId));
+            }
+            if (stored.Inserted.Any(n => !n.IsRead) || stored.ReadStateChanged > 0)
+            {
+                changes.Publish(new SocialChange(SocialChangeKind.Unread, provider.ProviderId));
+            }
         }
 
         // Update poll state
