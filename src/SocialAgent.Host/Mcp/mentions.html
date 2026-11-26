@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mentions</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff; --fg: #1f2328; --muted: #59636e; --line: #d1d9e0; --accent: #0969da;
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0d1117; --fg: #e6edf3; --muted: #9198a1; --line: #3d444d; --accent: #4493f8; }
+  }
+  body { margin: 0; padding: 12px 16px; background: var(--bg); color: var(--fg); }
+  h1 { font-size: 15px; margin: 0 0 8px; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { border-top: 1px solid var(--line); padding: 10px 0; }
+  .meta { color: var(--muted); font-size: 12px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .who { color: var(--fg); font-weight: 600; }
+  .tag { border: 1px solid var(--line); border-radius: 999px; padding: 0 6px; }
+  .text { margin: 4px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  a { color: var(--accent); }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<h1 id="title">Mentions and replies</h1>
+<ul id="list"><li class="empty">Waiting for results…</li></ul>
+<script>
+  // Mention text is written by other people: everything is set through textContent, never as HTML.
+  const list = document.getElementById("list");
+  const title = document.getElementById("title");
+  let nextId = 1;
+
+  function send(method, params, isRequest) {
+    const message = { jsonrpc: "2.0", method, params };
+    if (isRequest) message.id = nextId++;
+    window.parent.postMessage(message, "*");
+  }
+
+  function el(tag, className, text) {
+    const node = document.createElement(tag);
+    if (className) node.className = className;
+    if (text !== undefined && text !== null) node.textContent = String(text);
+    return node;
+  }
+
+  function render(result) {
+    const data = result && result.structuredContent;
+    const mentions = (data && Array.isArray(data.mentions)) ? data.mentions : [];
+    title.textContent = mentions.length + " mentions and replies" +
+      (data && data.providerId && data.providerId !== "all" ? " on " + data.providerId : "");
+    list.replaceChildren();
+    if (mentions.length === 0) {
+      list.append(el("li", "empty", "Nothing new."));
+      return;
+    }
+    for (const m of mentions) {
+      const item = el("li");
+      const meta = el("div", "meta");
+      meta.append(el("span", "who", m.fromHandle), el("span", "tag", m.type), el("span", "tag", m.providerId));
+      const when = new Date(m.createdAt);
+      meta.append(el("span", null, isNaN(when) ? m.createdAt : when.toLocaleString()));
+      item.append(meta);
+      if (m.content) item.append(el("p", "text", m.content));
+      if (typeof m.url === "string" && /^https:\/\//i.test(m.url)) {
+        const link = el("a", null, "Open post");
+        link.href = m.url;
+        link.rel = "noopener noreferrer";
+        link.target = "_blank";
+        link.addEventListener("click", (e) => { e.preventDefault(); send("ui/open-link", { url: m.url }, true); });
+        item.append(link);
+      }
+      list.append(item);
+    }
+  }
+
+  window.addEventListener("message", (event) => {
+    const message = event.data;
+    if (!message || message.jsonrpc !== "2.0") return;
+    if (message.method === "ui/notifications/tool-result") render(message.params);
+    // The answer to ui/initialize: tell the host the view is ready for the tool's data.
+    if (message.id === 1 && message.result) send("ui/notifications/initialized", {}, false);
+  });
+
+  send("ui/initialize", {
+    appInfo: { name: "socialagent-mentions", version: "1.0.0" },
+    appCapabilities: {},
+    protocolVersion: "2026-01-26"
+  }, true);
+</script>
+</body>
+</html>

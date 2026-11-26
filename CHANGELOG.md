@@ -4,6 +4,41 @@ All notable changes to SocialAgent are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/).
 
+## [1.6.0] - 2026-11-26
+
+### Added
+- **MCP endpoint at `/mcp`** (#10): Streamable HTTP, stateless, protocol 2026-07-28, behind the
+  same API key as `/a2a`. Seven read-only tools mirror the A2A skills: `get_engagement_summary`,
+  `get_top_posts`, `get_recent_mentions`, `get_follower_insights`, `compare_platforms`,
+  `get_unread_notifications`, `get_provider_status`. Each returns a summary line plus compact JSON
+  as text, and the same object as `structuredContent` with an output schema. `providerId` is
+  resolved exactly as for the A2A skills.
+- **Resources with push updates**: `social://providers`, `social://mentions`,
+  `social://mentions/{providerId}`, `social://notifications/unread` and
+  `social://posts/{providerId}/{postId}`, each with a `marker`. Clients that support
+  `subscriptions/listen` get `notifications/resources/updated` when a poll stores something that
+  changes a watched resource, so "tell me when someone replies on Bluesky" is a watch on
+  `social://mentions/bluesky` instead of polling a skill.
+- A `since` that isn't a timestamp is asked about once (MRTR input request) on clients that
+  support it; others get the default window and a notice.
+- An MCP Apps card (`ui://socialagent/mentions.html`) for `get_recent_mentions`.
+- Notifications store a link to their post (`url`; new migration `AddNotificationUrl` for both
+  databases). Rows already stored pick it up the next time a poll sees them.
+- The `recent-mentions` skill takes an optional `since`.
+- The agent card mentions the MCP endpoint.
+
+### Fixed
+- **Replies were missing from recent mentions.** Bluesky and Threads report a reply as type
+  `reply`, but recent mentions filtered on `mention` only. Mentions now means both, for the A2A
+  skill and the MCP tool and resources.
+- The poll log said "Stored N notifications" for the whole fetched batch, most of it already
+  stored. It now counts only new rows.
+
+### Changed
+- The A2A skills and the MCP tools share one query layer (`SocialQueries`). A2A output is unchanged.
+- `ISocialDataRepository.UpsertPostsAsync` and `UpsertNotificationsAsync` report what changed
+  (`PostUpsertResult`, `NotificationUpsertResult`).
+
 ## [1.5.5] - 2026-11-25
 
 ### Fixed

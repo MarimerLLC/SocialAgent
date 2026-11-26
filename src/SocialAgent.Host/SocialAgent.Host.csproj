@@ -2,12 +2,16 @@
   <PropertyGroup>
     <RootNamespace>SocialAgent.Host</RootNamespace>
     <UserSecretsId>socialagent-host-001</UserSecretsId>
-    <Version>1.5.5</Version>
+    <Version>1.6.0</Version>
+    <!-- MCPEXP003: the MCP Apps extension (the mentions card) is marked experimental in SDK 2.2.0. -->
+    <NoWarn>$(NoWarn);MCPEXP003</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Agents.AI.Hosting.A2A.AspNetCore" />
     <PackageReference Include="A2A" />
     <PackageReference Include="A2A.AspNetCore" />
+    <PackageReference Include="ModelContextProtocol.AspNetCore" />
+    <PackageReference Include="ModelContextProtocol.Extensions.Apps" />
     <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
@@ -20,6 +24,10 @@
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
     <PackageReference Include="Npgsql.OpenTelemetry" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The MCP Apps view for get_recent_mentions (Mcp/SocialAppResources). -->
+    <EmbeddedResource Include="Mcp\mentions.html" LogicalName="SocialAgent.Host.Mcp.mentions.html" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="SocialAgent.Host.Tests" />

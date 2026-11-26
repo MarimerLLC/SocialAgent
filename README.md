@@ -59,8 +59,50 @@ The agent speaks **A2A protocol version 1.0**.
 - `GET /.well-known/agent-card.json` — Agent card (A2A 1.0 discovery)
 - `POST /a2a` — JSON-RPC binding (`SendMessage`, `GetTask`, etc.)
 - `POST /a2a/message:send`, `GET /a2a/tasks/{id}`, etc. — HTTP+JSON binding
+- `POST /mcp` — MCP server (see [MCP Endpoint](#mcp-endpoint))
 - `GET /health/ready` — Readiness probe (checks database connectivity)
 - `GET /health/live` — Liveness probe (process only, so a database blip does not restart the pod)
+
+### MCP Endpoint
+
+`/mcp` serves the same data over the [Model Context Protocol](https://modelcontextprotocol.io)
+(Streamable HTTP, stateless, protocol `2026-07-28`; older clients get everything except push). It
+uses the same API key as `/a2a` (`X-Api-Key` header), and needs none in Development.
+
+**Tools** (all read-only). Each returns one summary line plus compact JSON in its text block, and
+the same object as `structuredContent` with an output schema:
+
+| Tool | Parameters |
+|---|---|
+| `get_engagement_summary` | `providerId?`, `since?` (default: last 7 days) |
+| `get_top_posts` | `providerId?`, `count?` (default 10), `since?` (default: last 30 days) |
+| `get_recent_mentions` | `providerId?`, `count?` (default 20), `since?` — mentions **and replies** |
+| `get_follower_insights` | `providerId?`, `count?` (default 10), `since?` (default: last 30 days) |
+| `compare_platforms` | `since?` (default: last 7 days) |
+| `get_unread_notifications` | `providerId?` |
+| `get_provider_status` | none |
+
+`providerId` works as it does for the A2A skills: omit it (or pass `all`) for every provider in one
+call. An unknown one is an error listing the valid ids. A `since` that isn't an ISO-8601 timestamp
+is asked about once, for clients that support MRTR input requests; otherwise the tool uses its
+default window and says so. `get_recent_mentions` also carries an MCP Apps card
+(`ui://socialagent/mentions.html`) for hosts that render one.
+
+**Resources**, each JSON with a `marker` that changes exactly when the content does:
+
+| URI | Content |
+|---|---|
+| `social://providers` | Each provider and whether it is connected |
+| `social://mentions` | The 50 newest mentions and replies, every provider |
+| `social://mentions/{providerId}` | The same for one provider, e.g. `social://mentions/bluesky` |
+| `social://notifications/unread` | Every unread notification |
+| `social://posts/{providerId}/{postId}` | One post's engagement counts (`postId` percent-escaped) |
+
+Clients on `2026-07-28` can watch these with `subscriptions/listen` and get a
+`notifications/resources/updated` when the polling loop stores something that changes them, so
+updates arrive no faster than `SocialAgent:PollingIntervalMinutes`. Each stream ends after
+`SocialAgent:Mcp:Subscriptions:StreamMinutes` (default 25) and the client reconnects. The change
+feed is in-process, so the deployment must stay at **one replica**.
 
 ### Configuration
 
